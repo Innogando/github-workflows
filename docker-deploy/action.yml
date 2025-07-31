@@ -2,7 +2,7 @@ name: 'Docker Deploy'
 description: 'Builds and deploys a Docker-based service to a remote server'
 inputs:
   docker_compose_file:
-    required: true
+    required: false
     default: "docker-compose.yml"
   project_name:
     required: true
