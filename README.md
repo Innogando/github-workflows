@@ -20,8 +20,8 @@ You can reference these workflows in other repositories using the `uses` keyword
 
 ```yaml
 jobs:
-  ci:
-    uses: Innogando/github-workflows/.github/workflows/branch-sync.yml@main
+  cd:
+    uses: Innogando/github-workflows/docker-deploy@v1
 ```
 
 Make sure to replace the path and filename with the specific workflow you want to use.
