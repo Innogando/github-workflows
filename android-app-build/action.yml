@@ -1,0 +1,59 @@
+name: 'Android App Build & Telegram Upload'
+description: 'Builds a Flutter Android APK and sends it via Telegram.'
+inputs:
+  project_name:
+    required: true
+  git_crypt_key:
+    required: true
+  telegram_token:
+    required: true
+  telegram_chat_id:
+    required: true
+  flutter_version:
+    required: false
+    default: '3.24.5'
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/checkout@v4
+
+    - uses: flydiverny/setup-git-crypt@v4
+
+    - name: Unlock secrets
+      run: |
+        echo "${{ inputs.git_crypt_key }}" | base64 -d > git-crypt-key
+        git-crypt unlock git-crypt-key
+      shell: bash
+
+    - uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        flutter-version: ${{ inputs.flutter_version }}
+
+    - name: Build Android APK
+      run: |
+        flutter pub get
+        flutter build apk --target-platform android-arm64 --release
+      shell: bash
+
+    - name: Get Git log for changelog
+      id: changelog
+      run: |
+        echo "CHANGES<<EOF" >> $GITHUB_ENV
+        git log -1 --pretty=format:"- %s" >> $GITHUB_ENV
+        echo "EOF" >> $GITHUB_ENV
+      shell: bash
+
+    - name: Send APK via Telegram
+      uses: appleboy/telegram-action@master
+      with:
+        to: ${{ inputs.telegram_chat_id }}
+        token: ${{ inputs.telegram_token }}
+        document: build/app/outputs/flutter-apk/app-release.apk
+        caption: |
+          🚀 Nueva versión de ${inputs.project_name} disponible
+
+          Cambios incluidos:
+          ${{ env.CHANGES }}
+        parse_mode: markdown

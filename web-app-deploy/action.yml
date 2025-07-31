@@ -1,0 +1,85 @@
+name: 'Web App Deploy (Flutter)'
+description: 'Builds and deploys a Flutter web app to a remote server.'
+inputs:
+  project_name:
+    required: true
+  ssh_host:
+    required: true
+  ssh_user:
+    required: true
+  ssh_port:
+    required: true
+  aws_ssh_key:
+    required: true
+  git_crypt_key:
+    required: true
+  wg_endpoint:
+    required: true
+  wg_endpoint_public_key:
+    required: true
+  wg_ips:
+    required: true
+  wg_allowed_ips:
+    required: true
+  wg_private_key:
+    required: true
+  flutter_version:
+    required: false
+    default: '3.24.5'
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/checkout@v4
+
+    - uses: flydiverny/setup-git-crypt@v4
+
+    - name: Unlock secrets
+      run: |
+        echo "${{ inputs.git_crypt_key }}" | base64 -d > git-crypt-key
+        git-crypt unlock git-crypt-key
+      shell: bash
+
+    - uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        flutter-version: ${{ inputs.flutter_version }}
+
+    - name: Build Flutter Web
+      run: |
+        flutter pub get
+        flutter build web
+      shell: bash
+
+    - uses: egor-tensin/setup-wireguard@v1
+      with:
+        endpoint: ${{ inputs.wg_endpoint }}
+        endpoint_public_key: ${{ inputs.wg_endpoint_public_key }}
+        ips: ${{ inputs.wg_ips }}
+        allowed_ips: ${{ inputs.wg_allowed_ips }}
+        private_key: ${{ inputs.wg_private_key }}
+
+    - uses: appleboy/scp-action@v1
+      with:
+        host: ${{ inputs.ssh_host }}
+        username: ${{ inputs.ssh_user }}
+        key: ${{ inputs.aws_ssh_key }}
+        port: ${{ inputs.ssh_port }}
+        source: build/web/*
+        target: /srv/app/docker/${{ inputs.project_name }}/
+        strip_components: 2
+        rm: true
+
+    - uses: appleboy/ssh-action@v1
+      with:
+        host: ${{ inputs.ssh_host }}
+        username: ${{ inputs.ssh_user }}
+        key: ${{ inputs.aws_ssh_key }}
+        port: ${{ inputs.ssh_port }}
+        script: |
+          cd /srv/app/docker/nginx/
+          docker compose \
+            up \
+            --force-recreate \
+            --remove-orphans \
+            --detach

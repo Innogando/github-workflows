@@ -1,0 +1,103 @@
+name: 'Docker Deploy'
+description: 'Builds and deploys a Docker-based service to a remote server'
+inputs:
+  docker_compose_file:
+    required: true
+    default: "docker-compose.yml"
+  project_name:
+    required: true
+  ssh_host:
+    required: true
+  ssh_user:
+    required: true
+  ssh_port:
+    required: true
+  aws_ssh_key:
+    required: true
+  git_crypt_key:
+    required: true
+  wg_endpoint:
+    required: true
+  wg_endpoint_public_key:
+    required: true
+  wg_ips:
+    required: true
+  wg_allowed_ips:
+    required: true
+  wg_private_key:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/checkout@v4
+
+    - uses: flydiverny/setup-git-crypt@v4
+
+    - name: Unlock secrets
+      run: |
+        echo "${{ inputs.git_crypt_key }}" | base64 -d > git-crypt-key
+        git-crypt unlock git-crypt-key
+      shell: bash
+
+    - name: Setup Docker Buildx
+    - uses: docker/setup-buildx-action@v3
+
+    - name: Build Docker image
+    - uses: docker/build-push-action@v6
+      with:
+        context: .
+        tags: ${{ inputs.project_name }}:latest
+        outputs: type=docker,dest=${{ inputs.project_name }}.tar
+
+    - name: Setup WireGuard
+    - uses: egor-tensin/setup-wireguard@v1
+      with:
+        endpoint: ${{ inputs.wg_endpoint }}
+        endpoint_public_key: ${{ inputs.wg_endpoint_public_key }}
+        ips: ${{ inputs.wg_ips }}
+        allowed_ips: ${{ inputs.wg_allowed_ips }}
+        private_key: ${{ inputs.wg_private_key }}
+
+    - name: Copy files to remote server
+    - uses: appleboy/scp-action@v1
+      with:
+        host: ${{ inputs.ssh_host }}
+        username: ${{ inputs.ssh_user }}
+        key: ${{ inputs.aws_ssh_key }}
+        port: ${{ inputs.ssh_port }}
+        source: "${{ inputs.docker_compose_file }},${{ inputs.project_name }}.tar,.env"
+        target: /srv/app/docker/${{ inputs.project_name }}/
+
+    - name: Load Docker image and start services
+    - uses: appleboy/ssh-action@v1
+      with:
+        host: ${{ inputs.ssh_host }}
+        username: ${{ inputs.ssh_user }}
+        key: ${{ inputs.aws_ssh_key }}
+        port: ${{ inputs.ssh_port }}
+        script: |
+          cd /srv/app/docker/${{ inputs.project_name }}/
+          docker load --input ./${{ inputs.project_name }}.tar
+          docker compose \
+            -f ${inputs.docker_compose_file} \
+            up \
+            --force-recreate \
+            --remove-orphans \
+            --detach
+
+    - name: Restart nginx
+    - uses: appleboy/ssh-action@v1
+      with:
+        host: ${{ inputs.ssh_host }}
+        username: ${{ inputs.ssh_user }}
+        key: ${{ inputs.aws_ssh_key }}
+        port: ${{ inputs.ssh_port }}
+        script: |
+          cd /srv/app/docker/nginx/
+          docker compose \
+            -f ${inputs.docker_compose_file} \
+            up \
+            --force-recreate \
+            --remove-orphans \
+            --detach

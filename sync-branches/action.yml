@@ -1,0 +1,36 @@
+name: 'Sync Branches'
+description: 'Sync one Git branch into another automatically'
+author: 'Innogando'
+inputs:
+  source_branch:
+    description: 'Branch to sync from'
+    required: true
+  target_branch:
+    description: 'Branch to sync to'
+    required: true
+  gh_token:
+    description: 'GitHub Token (use GITHUB_TOKEN when possible)'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ inputs.gh_token }}
+
+    - name: Set up Git config
+      run: |
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "github-actions@github.com"
+      shell: bash
+
+    - name: Sync branches
+      run: |
+        git fetch origin
+        git checkout ${{ inputs.target_branch }}
+        git merge origin/${{ inputs.source_branch }} -X theirs
+        git push origin ${{ inputs.target_branch }}
+      shell: bash

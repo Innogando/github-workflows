@@ -1,0 +1,35 @@
+name: 'Flutter Linter'
+description: 'Lints Flutter code using dart format and flutter analyze'
+
+inputs:
+  flutter_version:
+    required: false
+    default: '3.24.5'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        channel: 'stable'
+        flutter-version: ${{ inputs.flutter_version }}
+
+    - name: Install dependencies
+      run: flutter pub get
+      shell: bash
+
+    - name: Verify code formatting (excluding encrypted files)
+      run: |
+        mkdir -p /tmp/lib_temp
+        cp -r lib/* /tmp/lib_temp/
+        rm -f /tmp/lib_temp/utils/constants.dart
+        dart format --output=none --set-exit-if-changed /tmp/lib_temp/
+      shell: bash
+
+    - name: Static analysis
+      run: flutter analyze --fatal-warnings
+      shell: bash

@@ -1,0 +1,36 @@
+name: 'Check Build Number Flutter'
+
+description: 'Check build number in Flutter'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Check build number
+      run: |
+        # Get current build number
+        CURRENT_BUILD_NUMBER=$(grep "version:" pubspec.yaml | sed 's/.*+//')
+        echo "Current build number: $CURRENT_BUILD_NUMBER"
+        
+        # Get build number from main
+        git fetch origin main
+        git show origin/main:pubspec.yaml | grep "version:" | sed 's/.*+//' > main_build_number.txt
+        MAIN_BUILD_NUMBER=$(cat main_build_number.txt)
+        echo "Build number in main: $MAIN_BUILD_NUMBER"
+        
+        # Calculate expected build number
+        EXPECTED_BUILD_NUMBER=$((MAIN_BUILD_NUMBER + 1))
+        echo "Expected build number: $EXPECTED_BUILD_NUMBER"
+        
+        # Verify
+        if [ "$CURRENT_BUILD_NUMBER" -eq "$EXPECTED_BUILD_NUMBER" ]; then
+          echo "✅ The build number has been incremented correctly"
+        else
+          echo "❌ The build number validation has failed!"
+          echo "Current: $CURRENT_BUILD_NUMBER, Expected: $EXPECTED_BUILD_NUMBER"
+          echo "Please increment the build number in pubspec.yaml by 1"
+          exit 1
+        fi
+      shell: bash
