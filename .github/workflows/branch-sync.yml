@@ -1,0 +1,36 @@
+name: Sync Source Branch to Target Branch
+
+on:
+  workflow_call:
+    inputs:
+      source_branch:
+        required: true
+        type: string
+      target_branch:
+        required: true
+        type: string
+    secrets:
+      GH_TOKEN:
+        required: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Set up git
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "github-actions@github.com"
+
+      - name: Push changes from ${{ inputs.source_branch }} to ${{ inputs.target_branch }}
+        run: |
+          git fetch origin
+          git checkout ${{ inputs.target_branch }}
+          git merge origin/${{ inputs.source_branch }} -X theirs
+          git push origin ${{ inputs.target_branch }}
