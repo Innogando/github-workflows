@@ -11,8 +11,6 @@ inputs:
     required: true
   aws_ssh_key:
     required: true
-  git_crypt_key:
-    required: true
   wg_endpoint:
     required: true
   wg_endpoint_public_key:
@@ -26,19 +24,15 @@ inputs:
   flutter_version:
     required: false
     default: '3.24.5'
+  skip_checkout:
+    required: false
+    default: 'false'
 
 runs:
   using: "composite"
   steps:
     - uses: actions/checkout@v4
-
-    - uses: flydiverny/setup-git-crypt@v4
-
-    - name: Unlock secrets
-      run: |
-        echo "${{ inputs.git_crypt_key }}" | base64 -d > git-crypt-key
-        git-crypt unlock git-crypt-key
-      shell: bash
+      if: ${{ inputs.skip_checkout == 'false' }}
 
     - uses: subosito/flutter-action@v2
       with:
