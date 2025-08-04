@@ -41,17 +41,17 @@ runs:
       shell: bash
 
     - name: Setup Docker Buildx
-    - uses: docker/setup-buildx-action@v3
+      uses: docker/setup-buildx-action@v3
 
     - name: Build Docker image
-    - uses: docker/build-push-action@v6
+      uses: docker/build-push-action@v6
       with:
         context: .
         tags: ${{ inputs.project_name }}:latest
         outputs: type=docker,dest=${{ inputs.project_name }}.tar
 
     - name: Setup WireGuard
-    - uses: egor-tensin/setup-wireguard@v1
+      uses: egor-tensin/setup-wireguard@v1
       with:
         endpoint: ${{ inputs.wg_endpoint }}
         endpoint_public_key: ${{ inputs.wg_endpoint_public_key }}
@@ -60,7 +60,7 @@ runs:
         private_key: ${{ inputs.wg_private_key }}
 
     - name: Copy files to remote server
-    - uses: appleboy/scp-action@v1
+      uses: appleboy/scp-action@v1
       with:
         host: ${{ inputs.ssh_host }}
         username: ${{ inputs.ssh_user }}
@@ -70,7 +70,7 @@ runs:
         target: /srv/app/docker/${{ inputs.project_name }}/
 
     - name: Load Docker image and start services
-    - uses: appleboy/ssh-action@v1
+      uses: appleboy/ssh-action@v1
       with:
         host: ${{ inputs.ssh_host }}
         username: ${{ inputs.ssh_user }}
@@ -80,14 +80,14 @@ runs:
           cd /srv/app/docker/${{ inputs.project_name }}/
           docker load --input ./${{ inputs.project_name }}.tar
           docker compose \
-            -f ${inputs.docker_compose_file} \
+            -f ${{ inputs.docker_compose_file }} \
             up \
             --force-recreate \
             --remove-orphans \
             --detach
 
     - name: Restart nginx
-    - uses: appleboy/ssh-action@v1
+      uses: appleboy/ssh-action@v1
       with:
         host: ${{ inputs.ssh_host }}
         username: ${{ inputs.ssh_user }}
@@ -96,7 +96,7 @@ runs:
         script: |
           cd /srv/app/docker/nginx/
           docker compose \
-            -f ${inputs.docker_compose_file} \
+            -f ${{ inputs.docker_compose_file }} \
             up \
             --force-recreate \
             --remove-orphans \
