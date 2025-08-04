@@ -66,7 +66,7 @@ runs:
         username: ${{ inputs.ssh_user }}
         key: ${{ inputs.aws_ssh_key }}
         port: ${{ inputs.ssh_port }}
-        source: "${{ inputs.docker_compose_file }},${{ inputs.project_name }}.tar,.env,migrations,pg_hba.conf,postgres.conf"
+        source: "${{ inputs.docker_compose_file }},${{ inputs.project_name }}.tar,.env,migrations,pg_hba.conf,postgresql.conf"
         target: /srv/app/docker/${{ inputs.project_name }}/
 
     - name: Load Docker image and start services
