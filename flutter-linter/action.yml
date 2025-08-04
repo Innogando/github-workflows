@@ -5,6 +5,9 @@ inputs:
   flutter_version:
     required: false
     default: '3.24.5'
+  skip_analysis:
+    required: false
+    default: false
 
 runs:
   using: 'composite'
@@ -31,5 +34,6 @@ runs:
       shell: bash
 
     - name: Static analysis
+      if: ${{ inputs.skip_analysis == 'false' }}
       run: flutter analyze --fatal-warnings
       shell: bash
