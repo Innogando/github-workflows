@@ -96,7 +96,6 @@ runs:
         script: |
           cd /srv/app/docker/nginx/
           docker compose \
-            -f ${{ inputs.docker_compose_file }} \
             up \
             --force-recreate \
             --remove-orphans \
