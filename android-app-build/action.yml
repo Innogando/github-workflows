@@ -37,14 +37,6 @@ runs:
         flutter build apk --target-platform android-arm64 --release
       shell: bash
 
-    - name: Get Git log for changelog
-      id: changelog
-      run: |
-        echo "CHANGES<<EOF" >> $GITHUB_ENV
-        git log -1 --pretty=format:"- %s" >> $GITHUB_ENV
-        echo "EOF" >> $GITHUB_ENV
-      shell: bash
-
     - name: Send APK via Telegram
       uses: appleboy/telegram-action@master
       with:
@@ -52,8 +44,5 @@ runs:
         token: ${{ inputs.telegram_token }}
         document: build/app/outputs/flutter-apk/app-release.apk
         caption: |
-          🚀 Nueva versión de ${inputs.project_name} disponible
-
-          Cambios incluidos:
-          ${{ env.CHANGES }}
+          🚀 Nueva versión de ${inputs.project_name} disponible!
         parse_mode: markdown
