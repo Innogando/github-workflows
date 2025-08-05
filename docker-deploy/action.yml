@@ -68,6 +68,7 @@ runs:
         port: ${{ inputs.ssh_port }}
         source: "${{ inputs.docker_compose_file }},${{ inputs.project_name }}.tar,.env,migrations,pg_hba.conf,postgresql.conf"
         target: /srv/app/docker/${{ inputs.project_name }}/
+        rm: true
 
     - name: Load Docker image and start services
       uses: appleboy/ssh-action@v1
