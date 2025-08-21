@@ -88,7 +88,6 @@ runs:
             --force-recreate \
             --remove-orphans \
             --detach
-          rm ./${{ inputs.project_name }}.tar
 
     - name: Restart nginx
       uses: appleboy/ssh-action@v1
@@ -104,3 +103,15 @@ runs:
             --force-recreate \
             --remove-orphans \
             --detach
+
+    - name: Remove .tar file and system prune
+      uses: appleboy/ssh-action@v1
+      with:
+        host: ${{ inputs.ssh_host }}
+        username: ${{ inputs.ssh_user }}
+        key: ${{ inputs.aws_ssh_key }}
+        port: ${{ inputs.ssh_port }}
+        script: |
+          cd /srv/app/docker/${{ inputs.project_name }}/
+          rm ./${{ inputs.project_name }}.tar
+          docker system prune -f
