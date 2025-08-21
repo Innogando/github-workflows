@@ -15,7 +15,7 @@ inputs:
   aws_ssh_key:
     required: true
   git_crypt_key:
-    required: true
+    required: false
   wg_endpoint:
     required: true
   wg_endpoint_public_key:
@@ -33,8 +33,10 @@ runs:
     - uses: actions/checkout@v4
 
     - uses: flydiverny/setup-git-crypt@v4
+      if: ${{ inputs.git_crypt_key != '' }}
 
     - name: Unlock secrets
+      if: ${{ inputs.git_crypt_key != '' }}
       run: |
         echo "${{ inputs.git_crypt_key }}" | base64 -d > git-crypt-key
         git-crypt unlock git-crypt-key

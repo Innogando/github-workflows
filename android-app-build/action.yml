@@ -4,7 +4,7 @@ inputs:
   project_name:
     required: true
   git_crypt_key:
-    required: true
+    required: false
   telegram_token:
     required: true
   telegram_chat_id:
@@ -19,12 +19,13 @@ runs:
     - uses: actions/checkout@v4
 
     - uses: flydiverny/setup-git-crypt@v4
+      if: ${{ inputs.git_crypt_key != '' }}
 
     - name: Unlock secrets
+      if: ${{ inputs.git_crypt_key != '' }}
       run: |
         echo "${{ inputs.git_crypt_key }}" | base64 -d > git-crypt-key
         git-crypt unlock git-crypt-key
-      shell: bash
 
     - uses: subosito/flutter-action@v2
       with:
