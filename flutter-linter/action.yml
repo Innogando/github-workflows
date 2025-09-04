@@ -27,10 +27,7 @@ runs:
 
     - name: Verify code formatting (excluding encrypted files)
       run: |
-        mkdir -p /tmp/lib_temp
-        cp -r lib/* /tmp/lib_temp/
-        rm -f /tmp/lib_temp/utils/constants.dart
-        dart format --output=none --set-exit-if-changed /tmp/lib_temp/
+        find lib -name "constants.dart" -prune -o -name "*.dart" -print | xargs dart format --output=none --set-exit-if-changed
       shell: bash
 
     - name: Static analysis
