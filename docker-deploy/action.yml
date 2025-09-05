@@ -26,6 +26,9 @@ inputs:
     required: true
   wg_private_key:
     required: true
+  docker_profile:
+    required: false
+    description: 'Docker Compose profile to use when starting services'
 
 runs:
   using: "composite"
@@ -84,6 +87,7 @@ runs:
           docker load --input ./${{ inputs.project_name }}.tar
           docker compose \
             -f ${{ inputs.docker_compose_file }} \
+            ${{ inputs.docker_profile != '' && format('--profile {0}', inputs.docker_profile) || '' }} \
             up \
             --force-recreate \
             --remove-orphans \
