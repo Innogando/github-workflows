@@ -29,10 +29,10 @@ inputs:
   docker_profile:
     required: false
     description: 'Docker Compose profile to use when starting services'
-  optional_copy_paths:
+  skip_restart_nginx:
     required: false
-    description: 'Comma-separated additional files/dirs to copy (optional)'
-    default: ""
+    description: 'Skip restarting nginx'
+    default: false
 
 runs:
   using: "composite"
@@ -75,7 +75,7 @@ runs:
         username: ${{ inputs.ssh_user }}
         key: ${{ inputs.aws_ssh_key }}
         port: ${{ inputs.ssh_port }}
-        source: "${{ inputs.docker_compose_file }},${{ inputs.project_name }}.tar,.env${{ inputs.optional_copy_paths != '' && format(',{0}', inputs.optional_copy_paths) || '' }}"
+        source: "${{ inputs.docker_compose_file }},${{ inputs.project_name }}.tar,.env,migrations,postgresql.conf,pg_hba.conf"
         target: /srv/app/docker/${{ inputs.project_name }}/
         rm: true
 
@@ -98,6 +98,7 @@ runs:
             --detach
 
     - name: Restart nginx
+      if: ${{ inputs.skip_restart_nginx != 'true' }}
       uses: appleboy/ssh-action@v1
       with:
         host: ${{ inputs.ssh_host }}
