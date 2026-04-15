@@ -1,0 +1,74 @@
+name: Deploy - Update Manifest for ArgoCD
+
+on:
+  workflow_call:
+    inputs:
+      manifest_file:
+        description: "Path to the manifest file to update (e.g. manifest/overlays/prod/kustomization.yaml)"
+        required: true
+        type: string
+      image_tag:
+        description: New image tag to set in the manifest
+        required: true
+        type: string
+      sed_expression:
+        description: "sed expression to update the tag. Use IMAGE_TAG as placeholder (e.g. s|newTag:.*|newTag: \"IMAGE_TAG\"|g)"
+        required: true
+        type: string
+      target_branch:
+        description: Branch where the manifest lives
+        required: false
+        type: string
+        default: "main"
+      commit_message:
+        description: "Commit message template. Use IMAGE_TAG as placeholder."
+        required: false
+        type: string
+        default: "deploy: IMAGE_TAG [skip ci]"
+    secrets:
+      GH_PAT:
+        required: true
+
+jobs:
+  update-manifest:
+    name: Update Manifest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_branch }}
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Update manifest file
+        run: |
+          IMAGE_TAG="${{ inputs.image_tag }}"
+          EXPRESSION=$(echo '${{ inputs.sed_expression }}' | sed "s|IMAGE_TAG|${IMAGE_TAG}|g")
+          sed -i "${EXPRESSION}" ${{ inputs.manifest_file }}
+        shell: bash
+
+      - name: Commit and push
+        run: |
+          IMAGE_TAG="${{ inputs.image_tag }}"
+          MESSAGE=$(echo '${{ inputs.commit_message }}' | sed "s|IMAGE_TAG|${IMAGE_TAG}|g")
+
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add ${{ inputs.manifest_file }}
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            echo "### No Changes" >> $GITHUB_STEP_SUMMARY
+            echo "Manifest was already up to date" >> $GITHUB_STEP_SUMMARY
+          else
+            git commit -m "${MESSAGE}"
+            git push
+            echo "### Manifest Updated" >> $GITHUB_STEP_SUMMARY
+            echo "- **File:** \`${{ inputs.manifest_file }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Tag:** \`${IMAGE_TAG}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **ArgoCD will sync automatically**" >> $GITHUB_STEP_SUMMARY
+          fi
+        shell: bash

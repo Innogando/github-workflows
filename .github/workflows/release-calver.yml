@@ -1,0 +1,71 @@
+name: Release - CalVer
+
+on:
+  workflow_call:
+    secrets:
+      GH_PAT:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  create-release:
+    name: Create CalVer Release
+    if: |
+      github.event.pull_request.merged == true &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-release')
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.calver.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Create CalVer tag
+        id: calver
+        uses: Digital-Udvikling/actions-calver@v0.5.0
+        with:
+          github_token: ${{ secrets.GH_PAT }}
+
+      - name: Generate release notes
+        run: |
+          VERSION="${{ steps.calver.outputs.tag }}"
+          cat > release-notes.md << EOF
+          ## Changes in ${VERSION}
+
+          ### Pull Request
+          - **PR #${{ github.event.pull_request.number }}**: ${{ github.event.pull_request.title }}
+          - **Author**: @${{ github.event.pull_request.user.login }}
+          - **Link**: ${{ github.event.pull_request.html_url }}
+
+          ### Commits
+          EOF
+          git log --oneline \
+            ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} \
+            >> release-notes.md
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          gh release create "${{ steps.calver.outputs.tag }}" \
+            --title "Release ${{ steps.calver.outputs.tag }}" \
+            --notes-file release-notes.md \
+            --verify-tag
+
+      - name: Comment on PR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          VERSION="${{ steps.calver.outputs.tag }}"
+          gh pr comment ${{ github.event.pull_request.number }} --body "Release **${VERSION}** created (CalVer). CD will deploy automatically.
+
+          - Tag: \`${VERSION}\`
+          - [View Release](https://github.com/${{ github.repository }}/releases/tag/${VERSION})
+
+          Add label \`skip-release\` to skip future releases."

@@ -16,7 +16,7 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - uses: flydiverny/setup-git-crypt@v4
       if: ${{ inputs.git_crypt_key != '' }}
@@ -45,5 +45,5 @@ runs:
         token: ${{ inputs.telegram_token }}
         document: build/app/outputs/flutter-apk/app-release.apk
         caption: |
-          🚀 Nueva versión de ${inputs.project_name} disponible!
+          🚀 Nueva versión de ${{ inputs.project_name }} disponible!
         parse_mode: markdown

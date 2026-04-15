@@ -37,7 +37,7 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - uses: flydiverny/setup-git-crypt@v4
       if: ${{ inputs.git_crypt_key != '' }}
@@ -50,10 +50,10 @@ runs:
       shell: bash
 
     - name: Setup Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      uses: docker/setup-buildx-action@v4
 
     - name: Build Docker image
-      uses: docker/build-push-action@v6
+      uses: docker/build-push-action@v7
       with:
         context: .
         tags: ${{ inputs.project_name }}:latest

@@ -1,0 +1,33 @@
+name: Flutter Web Build
+description: Setup Flutter SDK, install dependencies, and build for web
+
+inputs:
+  flutter_version:
+    description: Flutter SDK version
+    required: true
+  base_href:
+    description: Base href for web build
+    required: false
+    default: "/"
+  build_args:
+    description: Extra arguments for flutter build web
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ inputs.flutter_version }}
+        channel: stable
+        cache: true
+
+    - name: Install dependencies
+      run: flutter pub get
+      shell: bash
+
+    - name: Build web
+      run: flutter build web --release --base-href ${{ inputs.base_href }} ${{ inputs.build_args }}
+      shell: bash

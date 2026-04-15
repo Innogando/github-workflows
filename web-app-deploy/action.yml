@@ -31,7 +31,7 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       if: ${{ inputs.skip_checkout == 'false' }}
 
     - uses: subosito/flutter-action@v2

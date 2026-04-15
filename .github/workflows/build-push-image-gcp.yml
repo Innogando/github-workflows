@@ -1,0 +1,137 @@
+name: Build & Push Image to GCP
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: Docker image name
+        required: true
+        type: string
+      repository:
+        description: Artifact Registry repository name
+        required: true
+        type: string
+      tag:
+        description: "Image tag. For prod: release tag. For dev: 'develop', 'dev', etc."
+        required: true
+        type: string
+      also_tag_latest:
+        description: Also push a :latest tag
+        required: false
+        type: boolean
+        default: false
+      checkout_ref:
+        description: Git ref to checkout (tag, branch, SHA)
+        required: false
+        type: string
+        default: ""
+      artifact_name:
+        description: Name of a GitHub artifact to download before Docker build (e.g. pre-built Flutter web assets)
+        required: false
+        type: string
+        default: ""
+      artifact_path:
+        description: Path where the downloaded artifact should be extracted
+        required: false
+        type: string
+        default: "."
+      gcp_project_id:
+        description: GCP project ID
+        required: false
+        type: string
+        default: "innogando"
+      gcp_region:
+        description: GCP region for Artifact Registry
+        required: false
+        type: string
+        default: "europe-southwest1"
+      build_args:
+        description: "Docker build-args (multiline KEY=VALUE)"
+        required: false
+        type: string
+        default: ""
+    outputs:
+      image:
+        description: Full image reference (registry/project/repo/name:tag)
+        value: ${{ jobs.build-and-push.outputs.image }}
+      tag:
+        description: Image tag used
+        value: ${{ jobs.build-and-push.outputs.tag }}
+    secrets:
+      GCP_SA_KEY:
+        required: true
+
+jobs:
+  build-and-push:
+    name: Build & Push
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      tag: ${{ steps.meta.outputs.tag }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+
+      - name: Download pre-build artifact
+        if: inputs.artifact_name != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ inputs.artifact_path }}
+
+      - name: Generate image metadata
+        id: meta
+        run: |
+          REGISTRY="${{ inputs.gcp_region }}-docker.pkg.dev"
+          IMAGE="${REGISTRY}/${{ inputs.gcp_project_id }}/${{ inputs.repository }}/${{ inputs.image_name }}"
+          TAG="${{ inputs.tag }}"
+          echo "image=${IMAGE}:${TAG}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "registry=${REGISTRY}" >> $GITHUB_OUTPUT
+          echo "image-base=${IMAGE}" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ steps.meta.outputs.registry }} --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Compute Docker tags
+        id: tags
+        run: |
+          TAGS="${{ steps.meta.outputs.image }}"
+          if [ "${{ inputs.also_tag_latest }}" == "true" ]; then
+            TAGS="${TAGS},${{ steps.meta.outputs.image-base }}:latest"
+          fi
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: ${{ inputs.build_args }}
+
+      - name: Summary
+        run: |
+          echo "### Image Published" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image:** \`${{ steps.meta.outputs.image }}\`" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ inputs.also_tag_latest }}" == "true" ]; then
+            echo "- **Latest:** \`${{ steps.meta.outputs.image-base }}:latest\`" >> $GITHUB_STEP_SUMMARY
+          fi

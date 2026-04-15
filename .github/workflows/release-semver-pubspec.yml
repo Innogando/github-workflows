@@ -1,0 +1,100 @@
+name: Release - SemVer from pubspec.yaml
+
+on:
+  workflow_call:
+    secrets:
+      GH_PAT:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  create-release:
+    name: Create SemVer Release
+    if: |
+      github.event.pull_request.merged == true &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-release')
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from pubspec.yaml
+        id: version
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | sed 's/+.*//' | tr -d ' ')
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not extract version from pubspec.yaml"
+            exit 1
+          fi
+          TAG="v${VERSION}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Check if tag exists
+        id: check
+        run: |
+          if git rev-parse "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create and push tag
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"
+
+      - name: Generate release notes
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          cat > release-notes.md << EOF
+          ## Changes in ${TAG}
+
+          ### Pull Request
+          - **PR #${{ github.event.pull_request.number }}**: ${{ github.event.pull_request.title }}
+          - **Author**: @${{ github.event.pull_request.user.login }}
+          - **Link**: ${{ github.event.pull_request.html_url }}
+
+          ### Commits
+          EOF
+          git log --oneline \
+            ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} \
+            >> release-notes.md
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          gh release create "${TAG}" \
+            --title "Release ${TAG}" \
+            --notes-file release-notes.md \
+            --verify-tag
+
+      - name: Comment on PR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if [ "${{ steps.check.outputs.exists }}" == "true" ]; then
+            BODY="Release **${TAG}** already exists. Update the version in \`pubspec.yaml\` to create a new release."
+          else
+            BODY="Release **${TAG}** created (SemVer from pubspec.yaml). CD will deploy automatically."
+          fi
+          gh pr comment ${{ github.event.pull_request.number }} --body "${BODY}"

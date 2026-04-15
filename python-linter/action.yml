@@ -1,17 +1,34 @@
-name: 'Python Linter'
-description: 'Lints Python code using isort and black'
+name: Python Linter
+description: Lint Python code with isort + black
+
+inputs:
+  src_paths:
+    description: Paths to lint (space-separated)
+    required: false
+    default: "./src"
+  python_version:
+    description: Python version for linting tools
+    required: false
+    default: "3.13"
 
 runs:
-  using: 'composite'
+  using: composite
   steps:
-    - uses: actions/checkout@v4
-    
-    - uses: isort/isort-action@v1
+    - uses: actions/checkout@v6
+
+    - uses: actions/setup-python@v6
       with:
-        args: "--check"
-        src: "./src"
-    
-    - uses: psf/black@stable
-      with:
-        options: "--check"
-        src: "./src"
+        python-version: ${{ inputs.python_version }}
+        cache: pip
+
+    - name: Install linters
+      run: pip install isort black
+      shell: bash
+
+    - name: Check import sorting
+      run: isort --check --diff --profile black ${{ inputs.src_paths }}
+      shell: bash
+
+    - name: Check code formatting
+      run: black --check --diff ${{ inputs.src_paths }}
+      shell: bash
