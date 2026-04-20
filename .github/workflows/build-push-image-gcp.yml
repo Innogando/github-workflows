@@ -25,6 +25,11 @@ on:
         required: false
         type: string
         default: ""
+      lfs:
+        description: Enable Git LFS support during checkout (required for repos with LFS-tracked assets)
+        required: false
+        type: boolean
+        default: false
       artifact_name:
         description: Name of a GitHub artifact to download before Docker build (e.g. pre-built Flutter web assets)
         required: false
@@ -74,6 +79,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ inputs.checkout_ref || github.sha }}
+          lfs: ${{ inputs.lfs }}
 
       - name: Download pre-build artifact
         if: inputs.artifact_name != ''

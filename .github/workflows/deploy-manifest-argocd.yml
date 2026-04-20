@@ -4,17 +4,23 @@ on:
   workflow_call:
     inputs:
       manifest_file:
-        description: "Path to the manifest file to update (e.g. manifest/overlays/prod/kustomization.yaml)"
+        description: "Path to the manifest file to update"
         required: true
         type: string
       image_tag:
-        description: New image tag to set in the manifest
+        description: "New image tag / value to set. Use IMAGE_TAG as placeholder in expressions."
         required: true
         type: string
       sed_expression:
-        description: "sed expression to update the tag. Use IMAGE_TAG as placeholder (e.g. s|newTag:.*|newTag: \"IMAGE_TAG\"|g)"
-        required: true
+        description: "sed expression to update the file. Use IMAGE_TAG as placeholder (e.g. s|newTag:.*|newTag: \"IMAGE_TAG\"|g). Mutually exclusive with yq_expression."
+        required: false
         type: string
+        default: ""
+      yq_expression:
+        description: "yq expression to update the file. Use IMAGE_TAG as placeholder (e.g. .spec.template.metadata.annotations.\"foo\" = \"IMAGE_TAG\"). Mutually exclusive with sed_expression."
+        required: false
+        type: string
+        default: ""
       target_branch:
         description: Branch where the manifest lives
         required: false
@@ -37,17 +43,38 @@ jobs:
       contents: write
 
     steps:
+      - name: Validate inputs
+        run: |
+          if [ -z "${{ inputs.sed_expression }}" ] && [ -z "${{ inputs.yq_expression }}" ]; then
+            echo "::error::Either sed_expression or yq_expression must be provided"
+            exit 1
+          fi
+          if [ -n "${{ inputs.sed_expression }}" ] && [ -n "${{ inputs.yq_expression }}" ]; then
+            echo "::error::sed_expression and yq_expression are mutually exclusive"
+            exit 1
+          fi
+        shell: bash
+
       - name: Checkout target branch
         uses: actions/checkout@v6
         with:
           ref: ${{ inputs.target_branch }}
           token: ${{ secrets.GH_PAT }}
 
-      - name: Update manifest file
+      - name: Update manifest file (sed)
+        if: inputs.sed_expression != ''
         run: |
           IMAGE_TAG="${{ inputs.image_tag }}"
           EXPRESSION=$(echo '${{ inputs.sed_expression }}' | sed "s|IMAGE_TAG|${IMAGE_TAG}|g")
           sed -i "${EXPRESSION}" ${{ inputs.manifest_file }}
+        shell: bash
+
+      - name: Update manifest file (yq)
+        if: inputs.yq_expression != ''
+        run: |
+          IMAGE_TAG="${{ inputs.image_tag }}"
+          EXPRESSION=$(echo '${{ inputs.yq_expression }}' | sed "s|IMAGE_TAG|${IMAGE_TAG}|g")
+          yq -i "${EXPRESSION}" ${{ inputs.manifest_file }}
         shell: bash
 
       - name: Commit and push
@@ -68,7 +95,7 @@ jobs:
             git push
             echo "### Manifest Updated" >> $GITHUB_STEP_SUMMARY
             echo "- **File:** \`${{ inputs.manifest_file }}\`" >> $GITHUB_STEP_SUMMARY
-            echo "- **Tag:** \`${IMAGE_TAG}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Value:** \`${IMAGE_TAG}\`" >> $GITHUB_STEP_SUMMARY
             echo "- **ArgoCD will sync automatically**" >> $GITHUB_STEP_SUMMARY
           fi
         shell: bash
