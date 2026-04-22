@@ -1,0 +1,9 @@
+name: 'Conventional Commits'
+description: 'Validates that PR commits follow the Conventional Commits spec'
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/checkout@v6
+
+    - uses: webiny/action-conventional-commits@v1.3.1

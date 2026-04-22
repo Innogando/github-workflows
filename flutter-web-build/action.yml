@@ -13,6 +13,10 @@ inputs:
     description: Extra arguments for flutter build web
     required: false
     default: ""
+  token:
+    description: If set, adds --dart-define=COWTROL_TOKEN=... (e.g. pass a repo secret; safe for special characters via env)
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -29,5 +33,15 @@ runs:
       shell: bash
 
     - name: Build web
-      run: flutter build web --release --base-href ${{ inputs.base_href }} ${{ inputs.build_args }}
+      env:
+        TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        if [ -n "${TOKEN}" ]; then
+          flutter build web --release --base-href "${{ inputs.base_href }}" \
+            --dart-define=COWTROL_TOKEN="${TOKEN}" \
+            ${{ inputs.build_args }}
+        else
+          flutter build web --release --base-href "${{ inputs.base_href }}" ${{ inputs.build_args }}
+        fi
       shell: bash

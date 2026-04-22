@@ -1,12 +1,14 @@
 # GitHub Actions Library - Innogando
 
-Reusable **workflows** and **composite actions** for Innogando's CI/CD. Centralizes automation across all repositories to ensure consistency and reduce duplication.
+**Composite actions** for Innogando's CI/CD. Centralizes automation across all repositories to ensure consistency and reduce duplication.
 
-## Reusable Workflows
+## Composite Actions
 
-Called from consumer repos with `uses: Innogando/github-workflows/.github/workflows/<name>@v2`.
+Composite actions run inline in a job of your choice, so the status check name is just the name of your job — ideal for configuring required checks in branch protection rules.
 
-### `build-push-image-gcp.yml`
+Called with `uses: Innogando/github-workflows/<action-name>@v2`.
+
+### `build-push-image-gcp`
 
 Builds a Docker image and pushes it to GCP Artifact Registry. Used by both production and develop pipelines.
 
@@ -15,24 +17,23 @@ Builds a Docker image and pushes it to GCP Artifact Registry. Used by both produ
 | `image_name` | yes | - | Docker image name |
 | `repository` | yes | - | Artifact Registry repository |
 | `tag` | yes | - | Image tag (release tag for prod, `develop` for dev) |
+| `gcp_sa_key` | yes | - | GCP Service Account JSON key |
 | `also_tag_latest` | no | `false` | Also push a `:latest` tag |
 | `checkout_ref` | no | `github.sha` | Git ref to checkout |
+| `lfs` | no | `false` | Enable Git LFS support during checkout |
 | `artifact_name` | no | `""` | GitHub artifact to download before build (e.g. Flutter web assets) |
 | `artifact_path` | no | `"."` | Path to extract the downloaded artifact |
 | `gcp_project_id` | no | `innogando` | GCP project ID |
 | `gcp_region` | no | `europe-southwest1` | GCP region |
 | `build_args` | no | `""` | Docker build-args (multiline `KEY=VALUE`) |
+| `context` | no | `.` | Docker build context path (folder containing the Dockerfile) |
 
 | Output | Description |
 |--------|-------------|
 | `image` | Full image reference (`registry/project/repo/name:tag`) |
 | `tag` | Image tag used |
 
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `GCP_SA_KEY` | yes | GCP Service Account JSON key |
-
-### `deploy-manifest-argocd.yml`
+### `deploy-manifest-argocd`
 
 Updates a Kubernetes manifest file in Git so ArgoCD syncs the new image. **Use only for production deploys.** For develop environments, use ArgoCD Image Updater instead (see [Deploy Strategy](#deploy-strategy)).
 
@@ -40,45 +41,47 @@ Updates a Kubernetes manifest file in Git so ArgoCD syncs the new image. **Use o
 |-------|----------|---------|-------------|
 | `manifest_file` | yes | - | Path to manifest (e.g. `manifest/overlays/prod/kustomization.yaml`) |
 | `image_tag` | yes | - | New image tag |
-| `sed_expression` | yes | - | sed expression with `IMAGE_TAG` as placeholder |
+| `gh_pat` | yes | - | GitHub PAT with repo write access |
+| `sed_expression` | no | `""` | sed expression with `IMAGE_TAG` as placeholder (mutually exclusive with `yq_expression`) |
+| `yq_expression` | no | `""` | yq expression with `IMAGE_TAG` as placeholder (mutually exclusive with `sed_expression`) |
 | `target_branch` | no | `main` | Branch where the manifest lives |
 | `commit_message` | no | `deploy: IMAGE_TAG [skip ci]` | Commit message (`IMAGE_TAG` replaced) |
 
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `GH_PAT` | yes | GitHub PAT with repo write access |
-
-### `release-calver.yml`
+### `release-calver`
 
 Creates a CalVer tag and GitHub Release when a PR is merged to main. Used by API projects (rumi-api, cowtrol-api, airflow).
 
-Caller must trigger on `pull_request: types: [closed], branches: [main]`.
+Caller must trigger on `pull_request: types: [closed], branches: [main]` (or an equivalent `push` trigger). The action internally skips when the PR is not merged, carries the `skip-release` label, or the push commit message contains the CD deploy marker.
 
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `GH_PAT` | yes | GitHub PAT for tag creation and release |
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `gh_pat` | yes | - | GitHub PAT for tag creation and release |
 
-### `release-semver-pubspec.yml`
+| Output | Description |
+|--------|-------------|
+| `tag` | The created CalVer tag (empty if the release was skipped) |
 
-Extracts the version from `pubspec.yaml`, creates a `vX.Y.Z` tag and GitHub Release. Used by Flutter apps (rumi-app, cowtrol).
+Required job permissions:
 
-Caller must trigger on `pull_request: types: [closed], branches: [main]`.
+```yaml
+permissions:
+  contents: write
+  pull-requests: write
+```
 
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `GH_PAT` | yes | GitHub PAT for tag creation and release |
+### `release-semver-pubspec`
 
-### `conventional-commits.yml`
+Creates a SemVer `vX.Y.Z` tag and GitHub Release from the version in `pubspec.yaml` when a PR is merged to `main`. Skips if the PR has the `skip-release` label, or if that tag already exists (comments on the PR in that case).
 
-Validates that PR commits follow the [Conventional Commits](https://www.conventionalcommits.org/) spec.
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `gh_pat` | yes | - | GitHub PAT for tag, release, and PR comment |
 
-No inputs or secrets required.
+| Output | Description |
+|--------|-------------|
+| `tag` | The `vX.Y.Z` tag (empty if the run was skipped) |
 
----
-
-## Composite Actions
-
-Called with `uses: Innogando/github-workflows/<action-name>@v2`.
+Caller should trigger on `pull_request: types: [closed], branches: [main]` with the same `permissions` as `release-calver` above.
 
 ### `python-linter`
 
@@ -107,6 +110,7 @@ Sets up Flutter and builds for web.
 | `flutter_version` | yes | - | Flutter SDK version |
 | `base_href` | no | `/` | Base href for web build |
 | `build_args` | no | `""` | Extra args for `flutter build web` |
+| `token` | no | `""` | If set, passes `--dart-define=COWTROL_TOKEN=...` (e.g. a repo secret; safe for special characters) |
 
 ### `gcp-docker-auth`
 
@@ -134,6 +138,12 @@ Builds a Flutter Android APK and sends it via Telegram.
 | `telegram_token` | yes | - | Telegram bot token |
 | `telegram_chat_id` | yes | - | Telegram chat ID |
 | `flutter_version` | no | `3.24.5` | Flutter SDK version |
+
+### `conventional-commits`
+
+Validates that PR commits follow the [Conventional Commits](https://www.conventionalcommits.org/) spec.
+
+No inputs required.
 
 ### `sync-branches`
 
@@ -204,25 +214,34 @@ on:
 
 jobs:
   build:
-    uses: Innogando/github-workflows/.github/workflows/build-push-image-gcp.yml@v2
-    with:
-      image_name: my-api
-      repository: my-api
-      tag: ${{ github.event.release.tag_name || inputs.release_tag }}
-      checkout_ref: ${{ github.event.release.tag_name || inputs.release_tag }}
-      also_tag_latest: true
-    secrets:
-      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+    name: Build & Push
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.build.outputs.tag }}
+    steps:
+      - id: build
+        uses: Innogando/github-workflows/build-push-image-gcp@v2
+        with:
+          image_name: my-api
+          repository: my-api
+          tag: ${{ github.event.release.tag_name || inputs.release_tag }}
+          checkout_ref: ${{ github.event.release.tag_name || inputs.release_tag }}
+          also_tag_latest: true
+          gcp_sa_key: ${{ secrets.GCP_SA_KEY }}
 
   deploy:
+    name: Deploy
     needs: build
-    uses: Innogando/github-workflows/.github/workflows/deploy-manifest-argocd.yml@v2
-    with:
-      manifest_file: manifest/overlays/prod/kustomization.yaml
-      image_tag: ${{ needs.build.outputs.tag }}
-      sed_expression: 's|newTag:.*|newTag: "IMAGE_TAG"|g'
-    secrets:
-      GH_PAT: ${{ secrets.GH_PAT }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: Innogando/github-workflows/deploy-manifest-argocd@v2
+        with:
+          manifest_file: manifest/overlays/prod/kustomization.yaml
+          image_tag: ${{ needs.build.outputs.tag }}
+          sed_expression: 's|newTag:.*|newTag: "IMAGE_TAG"|g'
+          gh_pat: ${{ secrets.GH_PAT }}
 ```
 
 ### Python API - Develop (no commit, ArgoCD Image Updater)
@@ -236,14 +255,16 @@ on:
 
 jobs:
   build:
-    uses: Innogando/github-workflows/.github/workflows/build-push-image-gcp.yml@v2
-    with:
-      image_name: my-api
-      repository: my-api
-      tag: develop
-      checkout_ref: develop
-    secrets:
-      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+    name: Build & Push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Innogando/github-workflows/build-push-image-gcp@v2
+        with:
+          image_name: my-api
+          repository: my-api
+          tag: develop
+          checkout_ref: develop
+          gcp_sa_key: ${{ secrets.GCP_SA_KEY }}
 ```
 
 ### Flutter Web - Production CD
@@ -271,28 +292,37 @@ jobs:
           retention-days: 1
 
   build-push:
+    name: Build & Push
     needs: build-web
-    uses: Innogando/github-workflows/.github/workflows/build-push-image-gcp.yml@v2
-    with:
-      image_name: my-app
-      repository: my-app
-      tag: ${{ github.event.release.tag_name }}
-      checkout_ref: ${{ github.event.release.tag_name }}
-      artifact_name: web-build
-      artifact_path: build/web
-      also_tag_latest: true
-    secrets:
-      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.build.outputs.tag }}
+    steps:
+      - id: build
+        uses: Innogando/github-workflows/build-push-image-gcp@v2
+        with:
+          image_name: my-app
+          repository: my-app
+          tag: ${{ github.event.release.tag_name }}
+          checkout_ref: ${{ github.event.release.tag_name }}
+          artifact_name: web-build
+          artifact_path: build/web
+          also_tag_latest: true
+          gcp_sa_key: ${{ secrets.GCP_SA_KEY }}
 
   deploy:
+    name: Deploy
     needs: build-push
-    uses: Innogando/github-workflows/.github/workflows/deploy-manifest-argocd.yml@v2
-    with:
-      manifest_file: manifest/overlays/prod/kustomization.yaml
-      image_tag: ${{ needs.build-push.outputs.tag }}
-      sed_expression: 's|newTag: ".*"|newTag: "IMAGE_TAG"|g'
-    secrets:
-      GH_PAT: ${{ secrets.GH_PAT }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: Innogando/github-workflows/deploy-manifest-argocd@v2
+        with:
+          manifest_file: manifest/overlays/prod/kustomization.yaml
+          image_tag: ${{ needs.build-push.outputs.tag }}
+          sed_expression: 's|newTag: ".*"|newTag: "IMAGE_TAG"|g'
+          gh_pat: ${{ secrets.GH_PAT }}
 ```
 
 ### Release (CalVer for APIs)
@@ -304,11 +334,18 @@ on:
     types: [closed]
     branches: [main]
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   release:
-    uses: Innogando/github-workflows/.github/workflows/release-calver.yml@v2
-    secrets:
-      GH_PAT: ${{ secrets.GH_PAT }}
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Innogando/github-workflows/release-calver@v2
+        with:
+          gh_pat: ${{ secrets.GH_PAT }}
 ```
 
 ### Release (SemVer for Flutter apps)
@@ -320,11 +357,17 @@ on:
     types: [closed]
     branches: [main]
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   release:
-    uses: Innogando/github-workflows/.github/workflows/release-semver-pubspec.yml@v2
-    secrets:
-      GH_PAT: ${{ secrets.GH_PAT }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Innogando/github-workflows/release-semver-pubspec@v2
+        with:
+          gh_pat: ${{ secrets.GH_PAT }}
 ```
 
 ### Conventional Commits
@@ -333,12 +376,17 @@ jobs:
 name: Conventional Commits
 on:
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 jobs:
-  validate:
-    uses: Innogando/github-workflows/.github/workflows/conventional-commits.yml@v2
+  conventional-commits:
+    name: Conventional Commits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Innogando/github-workflows/conventional-commits@v2
 ```
+
+The reported status check is simply `Conventional Commits`, which can be set as a required check in branch protection rules.
 
 ### CI - Python Lint
 
@@ -381,8 +429,8 @@ jobs:
 
 ## Versioning
 
-- **`@v1`**: Legacy tag pointing to the previous structure. Existing consumers are not broken.
-- **`@v2`**: Current version with reusable workflows and improved composite actions.
+- **`@v1`**: Legacy tag pointing to the previous structure.
+- **`@v2`**: Current version. All published automation is shipped as composite actions at the repository root.
 
 All composite actions maintain backward compatibility: new inputs have defaults that match v1 behavior.
 

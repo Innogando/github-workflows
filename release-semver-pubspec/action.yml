@@ -1,0 +1,147 @@
+name: 'Release - SemVer from pubspec.yaml'
+description: >-
+  Extracts the version from pubspec.yaml, creates a vX.Y.Z tag and GitHub Release
+  on merged PRs to main (not when the PR has the skip-release label).
+
+inputs:
+  gh_pat:
+    description: GitHub PAT for tag, release, and comment
+    required: true
+
+outputs:
+  tag:
+    description: The SemVer tag (vX.Y.Z), or empty if the release was skipped
+    value: ${{ steps.expose-tag.outputs.tag }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check release eligibility
+      id: guard
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        PR_MERGED: ${{ github.event.pull_request.merged }}
+        PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+      run: |
+        if [ "$EVENT_NAME" != "pull_request" ]; then
+          echo "skip=true" >> $GITHUB_OUTPUT
+          echo "::notice::release-semver-pubspec only runs for pull_request events"
+          exit 0
+        fi
+        if [ "$PR_MERGED" != "true" ]; then
+          echo "skip=true" >> $GITHUB_OUTPUT
+          echo "::notice::PR not merged, skipping release"
+          exit 0
+        fi
+        if echo "$PR_LABELS" | grep -q "skip-release"; then
+          echo "skip=true" >> $GITHUB_OUTPUT
+          echo "::notice::Label skip-release present, skipping"
+          exit 0
+        fi
+        echo "skip=false" >> $GITHUB_OUTPUT
+
+    - name: Checkout
+      if: steps.guard.outputs.skip == 'false'
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+        token: ${{ inputs.gh_pat }}
+
+    - name: Extract version from pubspec.yaml
+      id: version
+      if: steps.guard.outputs.skip == 'false'
+      shell: bash
+      run: |
+        VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | sed 's/+.*//' | tr -d ' ')
+        if [ -z "$VERSION" ]; then
+          echo "::error::Could not extract version from pubspec.yaml"
+          exit 1
+        fi
+        TAG="v${VERSION}"
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+    - name: Check if tag exists
+      id: check
+      if: steps.guard.outputs.skip == 'false'
+      shell: bash
+      run: |
+        if git rev-parse "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Create and push tag
+      if: steps.guard.outputs.skip == 'false' && steps.check.outputs.exists == 'false'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.gh_pat }}
+      run: |
+        TAG="${{ steps.version.outputs.tag }}"
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git tag -a "${TAG}" -m "Release ${TAG}"
+        git push origin "${TAG}"
+
+    - name: Generate release notes
+      if: steps.guard.outputs.skip == 'false' && steps.check.outputs.exists == 'false'
+      shell: bash
+      env:
+        PR_NUM: ${{ github.event.pull_request.number }}
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_USER: ${{ github.event.pull_request.user.login }}
+        PR_URL: ${{ github.event.pull_request.html_url }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        TAG="${{ steps.version.outputs.tag }}"
+        cat > release-notes.md << EOF
+        ## Changes in ${TAG}
+
+        ### Pull Request
+        - **PR #${PR_NUM}**: ${PR_TITLE}
+        - **Author**: @${PR_USER}
+        - **Link**: ${PR_URL}
+
+        ### Commits
+        EOF
+        git log --oneline "${BASE_SHA}..${HEAD_SHA}" >> release-notes.md
+
+    - name: Create GitHub Release
+      if: steps.guard.outputs.skip == 'false' && steps.check.outputs.exists == 'false'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.gh_pat }}
+      run: |
+        TAG="${{ steps.version.outputs.tag }}"
+        gh release create "${TAG}" \
+          --title "Release ${TAG}" \
+          --notes-file release-notes.md \
+          --verify-tag
+
+    - name: Comment on PR
+      if: steps.guard.outputs.skip == 'false' && steps.check.conclusion == 'success'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.gh_pat }}
+      run: |
+        TAG="${{ steps.version.outputs.tag }}"
+        if [ "${{ steps.check.outputs.exists }}" = "true" ]; then
+          BODY="Release **${TAG}** already exists. Update the version in \`pubspec.yaml\` to create a new release."
+        else
+          BODY="Release **${TAG}** created (SemVer from pubspec.yaml). CD will deploy automatically."
+        fi
+        gh pr comment ${{ github.event.pull_request.number }} --body "${BODY}"
+
+    - name: Expose tag output
+      id: expose-tag
+      if: always()
+      shell: bash
+      run: |
+        if [ "${{ steps.guard.outputs.skip }}" = "true" ] || [ -z "${{ steps.version.outputs.tag }}" ]; then
+          echo "tag=" >> $GITHUB_OUTPUT
+        else
+          echo "tag=${{ steps.version.outputs.tag }}" >> $GITHUB_OUTPUT
+        fi
