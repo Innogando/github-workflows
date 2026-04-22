@@ -13,9 +13,15 @@ permissions:
 jobs:
   create-release:
     name: Create CalVer Release
+    # pull_request trigger: only on merged PRs without skip-release label
+    # push trigger: skip bot commits from cd.yml and explicit skip-release markers
     if: |
-      github.event.pull_request.merged == true &&
-      !contains(github.event.pull_request.labels.*.name, 'skip-release')
+      (github.event_name == 'pull_request' &&
+        github.event.pull_request.merged == true &&
+        !contains(github.event.pull_request.labels.*.name, 'skip-release')) ||
+      (github.event_name == 'push' &&
+        !contains(github.event.head_commit.message, 'Automated deployment of release') &&
+        !contains(github.event.head_commit.message, 'skip-release'))
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.calver.outputs.tag }}
@@ -25,6 +31,42 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: Fetch PR info
+        id: pr-info
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          # Available for pull_request events
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Available for push events
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          COMMIT_AUTHOR: ${{ github.event.head_commit.author.name }}
+          COMMIT_BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "number=${PR_NUMBER}" >> $GITHUB_OUTPUT
+            echo "title=${PR_TITLE}" >> $GITHUB_OUTPUT
+            echo "author=${PR_AUTHOR}" >> $GITHUB_OUTPUT
+            echo "url=${PR_URL}" >> $GITHUB_OUTPUT
+            echo "base_sha=${PR_BASE_SHA}" >> $GITHUB_OUTPUT
+            echo "head_sha=${PR_HEAD_SHA}" >> $GITHUB_OUTPUT
+          else
+            PR_DATA=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" \
+              --jq '.[0] | {number: .number, title: .title, author: .user.login, url: .html_url}' \
+              2>/dev/null || echo '{}')
+            echo "number=$(echo "$PR_DATA" | jq -r '.number // "N/A"')" >> $GITHUB_OUTPUT
+            echo "title=$(echo "$PR_DATA" | jq -r --arg d "${COMMIT_MSG}" '.title // $d')" >> $GITHUB_OUTPUT
+            echo "author=$(echo "$PR_DATA" | jq -r --arg d "${COMMIT_AUTHOR}" '.author // $d')" >> $GITHUB_OUTPUT
+            echo "url=$(echo "$PR_DATA" | jq -r '.url // ""')" >> $GITHUB_OUTPUT
+            echo "base_sha=${COMMIT_BEFORE}" >> $GITHUB_OUTPUT
+            echo "head_sha=${{ github.sha }}" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
 
       - name: Create CalVer tag
         id: calver
@@ -39,14 +81,14 @@ jobs:
           ## Changes in ${VERSION}
 
           ### Pull Request
-          - **PR #${{ github.event.pull_request.number }}**: ${{ github.event.pull_request.title }}
-          - **Author**: @${{ github.event.pull_request.user.login }}
-          - **Link**: ${{ github.event.pull_request.html_url }}
+          - **PR #${{ steps.pr-info.outputs.number }}**: ${{ steps.pr-info.outputs.title }}
+          - **Author**: @${{ steps.pr-info.outputs.author }}
+          - **Link**: ${{ steps.pr-info.outputs.url }}
 
           ### Commits
           EOF
           git log --oneline \
-            ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} \
+            ${{ steps.pr-info.outputs.base_sha }}..${{ steps.pr-info.outputs.head_sha }} \
             >> release-notes.md
 
       - name: Create GitHub Release
@@ -59,13 +101,14 @@ jobs:
             --verify-tag
 
       - name: Comment on PR
+        if: steps.pr-info.outputs.number != 'N/A' && steps.pr-info.outputs.number != ''
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           VERSION="${{ steps.calver.outputs.tag }}"
-          gh pr comment ${{ github.event.pull_request.number }} --body "Release **${VERSION}** created (CalVer). CD will deploy automatically.
+          gh pr comment ${{ steps.pr-info.outputs.number }} --body "Release **${VERSION}** created (CalVer). CD will deploy automatically.
 
           - Tag: \`${VERSION}\`
           - [View Release](https://github.com/${{ github.repository }}/releases/tag/${VERSION})
 
-          Add label \`skip-release\` to skip future releases."
+          Add label \`skip-release\` (PR trigger) or \`skip-release\` in commit message (push trigger) to skip future releases."
