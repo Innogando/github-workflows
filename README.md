@@ -101,6 +101,15 @@ Lints Flutter/Dart code with `dart format` and `flutter analyze`.
 | `flutter_version` | no | `3.24.5` | Flutter SDK version |
 | `skip_analysis` | no | `false` | Skip `flutter analyze` |
 
+### `flutter-test`
+
+Runs `flutter pub get` and `flutter test`.
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `flutter_version` | no | `3.41.2` | Flutter SDK version |
+| `test_args` | no | `--reporter expanded` | Arguments passed to `flutter test` |
+
 ### `flutter-web-build`
 
 Sets up Flutter and builds for web.
@@ -416,6 +425,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: Innogando/github-workflows/flutter-linter@v2
+        with:
+          flutter_version: "3.41.2"
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Innogando/github-workflows/flutter-test@v2
         with:
           flutter_version: "3.41.2"
 

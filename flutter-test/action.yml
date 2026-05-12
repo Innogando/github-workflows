@@ -1,0 +1,32 @@
+name: 'Flutter Test'
+description: 'Runs Flutter tests with flutter pub get'
+
+inputs:
+  flutter_version:
+    description: Flutter SDK version
+    required: false
+    default: '3.41.2'
+  test_args:
+    description: Arguments passed to flutter test
+    required: false
+    default: '--reporter expanded'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        channel: 'stable'
+        flutter-version: ${{ inputs.flutter_version }}
+
+    - name: Install dependencies
+      run: flutter pub get
+      shell: bash
+
+    - name: Run tests
+      run: flutter test ${{ inputs.test_args }}
+      shell: bash
