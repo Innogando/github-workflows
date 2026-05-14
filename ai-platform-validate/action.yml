@@ -1,0 +1,67 @@
+name: AI Platform Validate
+description: Verify ai/shared/ matches the engineering-platform version pinned in .ai-platform.json (drift gate)
+
+inputs:
+  platform_repo:
+    description: Platform repository in `<owner>/<repo>` form
+    required: false
+    default: "Innogando/engineering-platform"
+  platform_token:
+    description: Token to clone the platform repo (use a PAT for private repos; falls back to GITHUB_TOKEN)
+    required: false
+    default: ""
+  warn_only:
+    description: If "true", drift produces a warning but does not fail the job (useful during initial rollout)
+    required: false
+    default: "false"
+  pin_file:
+    description: Path to the version pin file (relative to repo root)
+    required: false
+    default: ".ai-platform.json"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v6
+
+    - name: Read pinned version
+      id: pin
+      shell: bash
+      run: |
+        if [ ! -f "${{ inputs.pin_file }}" ]; then
+          echo "ERROR: ${{ inputs.pin_file }} not found at repo root."
+          echo "       Bootstrap this repo with engineering-platform/scripts/init-repo.sh first."
+          exit 1
+        fi
+        VERSION=$(python3 -c "import json; print(json.load(open('${{ inputs.pin_file }}'))['version'])")
+        echo "Pinned version: $VERSION"
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+    - name: Checkout engineering-platform at pinned version
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.platform_token || env.GITHUB_TOKEN }}
+      run: |
+        set -euo pipefail
+        VERSION="${{ steps.pin.outputs.version }}"
+        REPO_URL="https://github.com/${{ inputs.platform_repo }}.git"
+
+        if [ -n "${GH_TOKEN:-}" ]; then
+          REPO_URL="https://x-access-token:${GH_TOKEN}@github.com/${{ inputs.platform_repo }}.git"
+        fi
+
+        # Try the pinned tag first, fall back to default branch (informational)
+        if git clone --depth 1 --branch "$VERSION" "$REPO_URL" /tmp/engineering-platform 2>/dev/null; then
+          echo "Cloned ${{ inputs.platform_repo }} at $VERSION"
+        else
+          echo "WARN: Tag $VERSION not found in ${{ inputs.platform_repo }} — cloning default branch instead."
+          git clone --depth 1 "$REPO_URL" /tmp/engineering-platform
+        fi
+
+    - name: Validate ai/shared/ against pinned platform
+      shell: bash
+      env:
+        AI_PLATFORM_PATH: /tmp/engineering-platform
+        WARN_ONLY: ${{ inputs.warn_only == 'true' && '1' || '0' }}
+      run: |
+        bash /tmp/engineering-platform/scripts/validate.sh

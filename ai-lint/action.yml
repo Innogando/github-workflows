@@ -1,0 +1,128 @@
+name: AI Lint
+description: Lint a repo's AI engineering layer (AGENTS.md, ai/, adapters) against the Innogando convention
+
+inputs:
+  agents_md_max_lines:
+    description: Maximum line count for AGENTS.md
+    required: false
+    default: "200"
+  context_max_lines:
+    description: Maximum line count for each ai/context/*.md file
+    required: false
+    default: "150"
+  skill_body_max_lines:
+    description: Maximum line count for SKILL.md body (excluding frontmatter)
+    required: false
+    default: "500"
+  skip_adapter_lint:
+    description: Skip the adapter-lint step (set to "true" if ai/shared/hooks/lint-adapters.sh is not yet synced)
+    required: false
+    default: "false"
+  skip_vendor_check:
+    description: Skip the no-vendor-syntax-in-ai check
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v6
+
+    - name: Validate SKILL.md frontmatter
+      shell: bash
+      run: |
+        set -euo pipefail
+        errors=0
+        while IFS= read -r -d '' skill; do
+          fm=$(awk '/^---/{p++} p==1{print} p==2{exit}' "$skill")
+          if ! echo "$fm" | grep -q "^name:"; then
+            echo "MISSING 'name' in $skill"
+            errors=$((errors + 1))
+          fi
+          if ! echo "$fm" | grep -q "^description:"; then
+            echo "MISSING 'description' in $skill"
+            errors=$((errors + 1))
+          fi
+        done < <(find ai/skills -name "SKILL.md" -print0 2>/dev/null)
+        if [ "$errors" -gt 0 ]; then
+          echo "$errors frontmatter error(s) found."
+          exit 1
+        fi
+        echo "All SKILL.md files have valid frontmatter."
+
+    - name: AGENTS.md size budget
+      shell: bash
+      run: |
+        if [ ! -f AGENTS.md ]; then
+          echo "AGENTS.md not found — skipping size check."
+          exit 0
+        fi
+        lines=$(wc -l < AGENTS.md)
+        echo "AGENTS.md: $lines lines (max ${{ inputs.agents_md_max_lines }})"
+        if [ "$lines" -gt ${{ inputs.agents_md_max_lines }} ]; then
+          echo "ERROR: AGENTS.md exceeds ${{ inputs.agents_md_max_lines }}-line limit ($lines lines)."
+          echo "Move detail to ai/context/ or ai/skills/ and reference from AGENTS.md."
+          exit 1
+        fi
+
+    - name: ai/context file size budget
+      shell: bash
+      run: |
+        errors=0
+        while IFS= read -r -d '' f; do
+          lines=$(wc -l < "$f")
+          if [ "$lines" -gt ${{ inputs.context_max_lines }} ]; then
+            echo "OVER BUDGET ($lines/${{ inputs.context_max_lines }}): $f"
+            errors=$((errors + 1))
+          fi
+        done < <(find ai/context -name "*.md" -print0 2>/dev/null)
+        if [ "$errors" -gt 0 ]; then
+          echo "$errors context file(s) over budget."
+          exit 1
+        fi
+        echo "Context files: OK"
+
+    - name: ai/skills body size budget
+      shell: bash
+      run: |
+        errors=0
+        while IFS= read -r -d '' f; do
+          body_lines=$(awk '/^---/{p++; next} p>=2{print}' "$f" | wc -l)
+          if [ "$body_lines" -gt ${{ inputs.skill_body_max_lines }} ]; then
+            echo "OVER BUDGET ($body_lines/${{ inputs.skill_body_max_lines }} body lines): $f"
+            errors=$((errors + 1))
+          fi
+        done < <(find ai/skills -name "SKILL.md" -print0 2>/dev/null)
+        if [ "$errors" -gt 0 ]; then
+          echo "$errors skill(s) over budget."
+          exit 1
+        fi
+        echo "Skill bodies: OK"
+
+    - name: Adapter lint (.claude/, .cursor/, .opencode/ contain no organizational content)
+      if: inputs.skip_adapter_lint != 'true'
+      shell: bash
+      run: |
+        if [ -f ai/shared/hooks/lint-adapters.sh ]; then
+          bash ai/shared/hooks/lint-adapters.sh
+        else
+          echo "ai/shared/hooks/lint-adapters.sh not present — skipping (run sync.sh to populate, or pass skip_adapter_lint: true)"
+        fi
+
+    - name: No vendor syntax in ai/ content files
+      if: inputs.skip_vendor_check != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        errors=0
+        while IFS= read -r -d '' f; do
+          if grep -qE '^\s*@ai/' "$f" 2>/dev/null; then
+            echo "VENDOR SYNTAX in $f (@ include directive belongs in .claude/, not ai/)"
+            errors=$((errors + 1))
+          fi
+        done < <(find ai/skills ai/context ai/agents -name "*.md" -print0 2>/dev/null)
+        if [ "$errors" -gt 0 ]; then
+          echo "$errors vendor-syntax violation(s) in ai/ content."
+          exit 1
+        fi
+        echo "No vendor syntax in ai/ content files."

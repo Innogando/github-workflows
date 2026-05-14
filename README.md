@@ -164,6 +164,29 @@ Syncs one Git branch into another automatically.
 | `target_branch` | yes | - | Branch to sync to |
 | `gh_token` | yes | - | GitHub token |
 
+### `ai-lint`
+
+Lints a repo's AI engineering layer (`AGENTS.md`, `ai/`, adapters) against the Innogando convention. Validates SKILL.md frontmatter, enforces size budgets, checks `.claude/`/`.cursor/`/`.opencode/` contain no organizational content, and rejects vendor syntax inside `ai/` content files.
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `agents_md_max_lines` | no | `200` | Maximum line count for `AGENTS.md` |
+| `context_max_lines` | no | `150` | Maximum line count for each `ai/context/*.md` |
+| `skill_body_max_lines` | no | `500` | Maximum body line count for each `ai/skills/*/SKILL.md` (excludes frontmatter) |
+| `skip_adapter_lint` | no | `false` | Skip the adapter lint step (use during bootstrap before `ai/shared/` is first synced) |
+| `skip_vendor_check` | no | `false` | Skip the no-`@ai/`-in-`ai/`-content check |
+
+### `ai-platform-validate`
+
+Drift gate: verifies the consumer repo's `ai/shared/` matches the `engineering-platform` version pinned in `.ai-platform.json`. Fails the build if `ai/shared/` was manually edited or if the platform tag advanced.
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `platform_repo` | no | `Innogando/engineering-platform` | Platform repo in `<owner>/<repo>` form |
+| `platform_token` | no | `""` | Token to clone the platform repo (PAT for private; falls back to `GITHUB_TOKEN`) |
+| `warn_only` | no | `false` | If `true`, drift only warns (use during initial rollout, then flip to `false`) |
+| `pin_file` | no | `.ai-platform.json` | Path to the version pin file |
+
 ### Legacy Actions
 
 `docker-deploy` and `web-app-deploy` are kept for SSH-based server deployments (non-Kubernetes). See their `action.yml` for inputs.
@@ -410,6 +433,48 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: Innogando/github-workflows/python-linter@v2
+```
+
+### AI Engineering Layer (every Innogando repo)
+
+Two workflows. The first lints repo-local AI content; the second guards against drift from the central `engineering-platform`.
+
+```yaml
+name: ai-lint
+on:
+  pull_request:
+    paths:
+      - "ai/**"
+      - "AGENTS.md"
+      - ".claude/**"
+      - ".cursor/rules/**"
+      - ".opencode/**"
+      - ".ai-platform.json"
+
+jobs:
+  ai-lint:
+    name: AI Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Innogando/github-workflows/ai-lint@v2
+```
+
+```yaml
+name: ai-platform-validate
+on:
+  pull_request:
+    paths:
+      - "ai/shared/**"
+      - ".ai-platform.json"
+
+jobs:
+  validate:
+    name: AI Platform Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Innogando/github-workflows/ai-platform-validate@v2
+        with:
+          platform_token: ${{ secrets.GH_PAT }}   # only needed if engineering-platform is private
 ```
 
 ### CI - Flutter Lint
