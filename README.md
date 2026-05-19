@@ -187,6 +187,31 @@ Drift gate: verifies the consumer repo's `ai/shared/` matches the `engineering-p
 | `warn_only` | no | `false` | If `true`, drift only warns (use during initial rollout, then flip to `false`) |
 | `pin_file` | no | `.ai-platform.json` | Path to the version pin file |
 
+### `code-review`
+
+AI-powered pull request review via the org LiteLLM gateway. Fetches the PR diff, applies the repo's `AGENTS.md` and code-review skills, posts a structured review comment (idempotent — updates the previous bot comment on re-runs), and fails the job when blockers or failing CI are found.
+
+**Requires a self-hosted runner in the VPC** — LiteLLM is internal (`litellm.innogando.com`, VPN/VPC only). GitHub-hosted `ubuntu-latest` runners cannot reach it.
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `litellm_api_key` | yes | - | LiteLLM virtual key scoped to the `code-review` model |
+| `litellm_base_url` | no | `https://litellm.innogando.com/v1` | OpenAI-compatible LiteLLM base URL |
+| `model` | no | `code-review` | LiteLLM model alias |
+| `max_diff_lines` | no | `2000` | Skip review (with comment) if diff exceeds this many lines |
+| `skip_draft` | no | `true` | Skip draft PRs |
+| `fail_on_blockers` | no | `true` | Exit 1 when blockers or failing CI are found |
+| `gh_token` | no | `GITHUB_TOKEN` | GitHub token for PR API calls |
+| `pr_number` | no | `github.event.pull_request.number` | PR number to review |
+
+#### Prerequisites
+
+1. **Self-hosted runner** in the VPC — deployed via [`k8s-infra/infrastructure/github-actions-runner/`](https://github.com/Innogando/k8s-infra/tree/main/infrastructure/github-actions-runner) (ARC scale set, labels `[self-hosted, linux, innogando-vpc]`)
+2. **Org secret** `LITELLM_API_KEY` — virtual key created in LiteLLM UI, restricted to the `code-review` alias
+3. **LiteLLM alias** `code-review` deployed in k8s-infra (`claude-sonnet-4-6`)
+4. **GCP Secret Manager** `GITHUB_PAT` — used by the runner scale set (separate from this action's `litellm_api_key`)
+5. Consumer workflow must restrict to same-repo PRs (`if: github.event.pull_request.head.repo.full_name == github.repository`) to avoid secret exfiltration from forks
+
 ### Legacy Actions
 
 `docker-deploy` and `web-app-deploy` are kept for SSH-based server deployments (non-Kubernetes). See their `action.yml` for inputs.
@@ -476,6 +501,34 @@ jobs:
         with:
           platform_token: ${{ secrets.GH_PAT }}   # only needed if engineering-platform is private
 ```
+
+### AI Code Review (self-hosted runner required)
+
+```yaml
+name: Code Review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: code-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  code-review:
+    name: AI Code Review
+    runs-on: [self-hosted, linux, innogando-vpc]
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: Innogando/github-workflows/code-review@v2
+        with:
+          litellm_api_key: ${{ secrets.LITELLM_API_KEY }}
+```
+
+The reported status check is `AI Code Review`, which can be set as a required check in branch protection rules once the self-hosted runner is deployed.
 
 ### CI - Flutter Lint
 

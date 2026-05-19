@@ -1,0 +1,104 @@
+name: Code Review
+description: >-
+  AI-powered PR code review via LiteLLM. Posts a structured review comment on
+  the pull request (idempotently) and fails the job when blockers are found.
+
+inputs:
+  litellm_api_key:
+    description: LiteLLM virtual key scoped to the code-review model
+    required: true
+  litellm_base_url:
+    description: OpenAI-compatible LiteLLM base URL
+    required: false
+    default: "https://litellm.innogando.com/v1"
+  model:
+    description: LiteLLM model alias
+    required: false
+    default: "code-review"
+  max_diff_lines:
+    description: Skip review with a comment if the diff exceeds this many lines
+    required: false
+    default: "2000"
+  skip_draft:
+    description: Skip draft PRs when "true"
+    required: false
+    default: "true"
+  fail_on_blockers:
+    description: Exit 1 when blockers (or failing CI) are found when "true"
+    required: false
+    default: "true"
+  python_version:
+    description: Python version used to run the review script
+    required: false
+    default: "3.13"
+  gh_token:
+    description: GitHub token (defaults to github.token)
+    required: false
+    default: ""
+  pr_number:
+    description: PR number to review (defaults to github.event.pull_request.number)
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python_version }}
+
+    - name: Ensure gh CLI is available
+      shell: bash
+      run: |
+        set -euo pipefail
+        if command -v gh >/dev/null 2>&1; then
+          echo "gh CLI already installed: $(gh --version | head -1)"
+          exit 0
+        fi
+        if command -v apt-get >/dev/null 2>&1; then
+          echo "Installing gh via apt-get..."
+          sudo apt-get update
+          sudo apt-get install -y gh || {
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+              | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+            sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+              | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+            sudo apt-get update
+            sudo apt-get install -y gh
+          }
+        elif command -v dnf >/dev/null 2>&1; then
+          sudo dnf install -y gh
+        elif command -v apk >/dev/null 2>&1; then
+          sudo apk add --no-cache github-cli
+        elif command -v brew >/dev/null 2>&1; then
+          brew install gh
+        else
+          echo "::error::No supported package manager found to install gh CLI" >&2
+          exit 1
+        fi
+        gh --version | head -1
+
+    - name: Run AI code review
+      shell: bash
+      env:
+        LITELLM_API_KEY: ${{ inputs.litellm_api_key }}
+        LITELLM_BASE_URL: ${{ inputs.litellm_base_url }}
+        LITELLM_MODEL: ${{ inputs.model }}
+        MAX_DIFF_LINES: ${{ inputs.max_diff_lines }}
+        SKIP_DRAFT: ${{ inputs.skip_draft }}
+        FAIL_ON_BLOCKERS: ${{ inputs.fail_on_blockers }}
+        GH_TOKEN: ${{ inputs.gh_token || github.token }}
+        PR_NUMBER: ${{ inputs.pr_number || github.event.pull_request.number }}
+        GITHUB_ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        echo "::add-mask::${LITELLM_API_KEY}"
+        python3 "${GITHUB_ACTION_PATH}/review.py"
