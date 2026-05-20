@@ -1,0 +1,43 @@
+# =============================================================================
+# AI Code Review — workflow template
+#
+# Copy this file to `.github/workflows/code-review.yml` in your repo.
+#
+# Requires:
+#   - Self-hosted runner in the Innogando VPC (label: innogando-vpc)
+#     LiteLLM is internal and not reachable from GitHub-hosted runners.
+#   - Org/repo secret `LITELLM_API_KEY` — virtual key scoped to the
+#     `code-review` model alias in LiteLLM.
+#
+# The reported status check is `AI Code Review` — add it as a required
+# check in branch protection once the self-hosted runner is up.
+# =============================================================================
+name: Code Review
+
+on:
+  pull_request:
+    branches: [main]
+
+# One in-flight review per PR — newer pushes cancel older runs.
+concurrency:
+  group: code-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  code-review:
+    name: AI Code Review
+    runs-on: [self-hosted, linux, innogando-vpc]
+    # Skip PRs from forks — would leak secrets through `pull_request` event.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      pull-requests: write   # comment on the PR
+      contents: read         # checkout + diff
+    steps:
+      - uses: Innogando/github-workflows/code-review@v2
+        with:
+          litellm_api_key: ${{ secrets.LITELLM_API_KEY }}
+          # Optional overrides (defaults shown):
+          # model: code-review
+          # max_diff_lines: "2000"
+          # skip_draft: "true"
+          # fail_on_blockers: "true"
