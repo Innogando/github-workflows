@@ -7,7 +7,9 @@ Run from the repo root:
 
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -197,6 +199,90 @@ class CommentBodyTests(unittest.TestCase):
         body = review.comment_body("hello")
         self.assertTrue(body.startswith(review.COMMENT_MARKER))
         self.assertIn("hello", body)
+
+
+class CompactMetaTests(unittest.TestCase):
+    def _full_meta(self, **overrides) -> dict:
+        base = {
+            "number": 42,
+            "title": "Add widget",
+            "author": {"login": "alice", "name": "Alice Smith", "id": 123},
+            "baseRefName": "main",
+            "headRefName": "feat/widget",
+            "additions": 10,
+            "deletions": 2,
+            "changedFiles": 3,
+            "isDraft": False,
+            "labels": [{"name": "bug", "color": "red", "description": "a bug"}],
+            "body": "Fixes the widget",
+            "reviewDecision": "APPROVED",
+            "mergeable": "MERGEABLE",
+        }
+        base.update(overrides)
+        return base
+
+    def test_contains_essential_fields(self):
+        compact = review._compact_meta(self._full_meta())
+        self.assertEqual(compact["number"], 42)
+        self.assertEqual(compact["author"], "alice")
+        self.assertEqual(compact["base"], "main")
+        self.assertEqual(compact["head"], "feat/widget")
+        self.assertEqual(compact["labels"], ["bug"])
+        self.assertEqual(compact["draft"], False)
+
+    def test_omits_verbose_github_fields(self):
+        compact = review._compact_meta(self._full_meta())
+        self.assertNotIn("reviewDecision", compact)
+        self.assertNotIn("mergeable", compact)
+
+    def test_body_truncated_at_500_chars(self):
+        long_body = "x" * 600
+        compact = review._compact_meta(self._full_meta(body=long_body))
+        self.assertEqual(len(compact["body"]), 501)  # 500 chars + ellipsis
+        self.assertTrue(compact["body"].endswith("…"))
+
+    def test_body_not_truncated_when_short(self):
+        compact = review._compact_meta(self._full_meta(body="short"))
+        self.assertEqual(compact["body"], "short")
+
+    def test_missing_author_falls_back_to_unknown(self):
+        compact = review._compact_meta(self._full_meta(author=None))
+        self.assertEqual(compact["author"], "unknown")
+
+    def test_empty_labels(self):
+        compact = review._compact_meta(self._full_meta(labels=[]))
+        self.assertEqual(compact["labels"], [])
+
+
+class WriteGithubOutputTests(unittest.TestCase):
+    def test_writes_verdict_and_has_blockers(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as f:
+            tmp_path = f.name
+        try:
+            os.environ["GITHUB_OUTPUT"] = tmp_path
+            review.write_github_output("approve", False)
+            content = Path(tmp_path).read_text()
+            self.assertIn("verdict=approve\n", content)
+            self.assertIn("has_blockers=false\n", content)
+        finally:
+            del os.environ["GITHUB_OUTPUT"]
+            os.unlink(tmp_path)
+
+    def test_writes_has_blockers_true(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as f:
+            tmp_path = f.name
+        try:
+            os.environ["GITHUB_OUTPUT"] = tmp_path
+            review.write_github_output("request_changes", True)
+            content = Path(tmp_path).read_text()
+            self.assertIn("has_blockers=true\n", content)
+        finally:
+            del os.environ["GITHUB_OUTPUT"]
+            os.unlink(tmp_path)
+
+    def test_no_op_when_env_unset(self):
+        os.environ.pop("GITHUB_OUTPUT", None)
+        review.write_github_output("approve", False)  # should not raise
 
 
 if __name__ == "__main__":

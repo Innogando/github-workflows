@@ -31,6 +31,12 @@ inputs:
     description: Python version used to run the review script
     required: false
     default: "3.13"
+  max_diff_skip_multiplier:
+    description: >-
+      Skip entirely when diff exceeds max_diff_lines × this multiplier (default 3).
+      A diff between max_diff_lines and max_diff_lines × multiplier is truncated and reviewed with a warning.
+    required: false
+    default: "3"
   gh_token:
     description: GitHub token (defaults to github.token)
     required: false
@@ -39,6 +45,14 @@ inputs:
     description: PR number to review (defaults to github.event.pull_request.number)
     required: false
     default: ""
+
+outputs:
+  verdict:
+    description: "LLM verdict: approve | approve_with_comments | request_changes | cannot_review"
+    value: ${{ steps.review.outputs.verdict }}
+  has_blockers:
+    description: "'true' if the review found blockers or CI is failing, 'false' otherwise"
+    value: ${{ steps.review.outputs.has_blockers }}
 
 runs:
   using: composite
@@ -87,12 +101,14 @@ runs:
         gh --version | head -1
 
     - name: Run AI code review
+      id: review
       shell: bash
       env:
         LITELLM_API_KEY: ${{ inputs.litellm_api_key }}
         LITELLM_BASE_URL: ${{ inputs.litellm_base_url }}
         LITELLM_MODEL: ${{ inputs.model }}
         MAX_DIFF_LINES: ${{ inputs.max_diff_lines }}
+        MAX_DIFF_SKIP_MULTIPLIER: ${{ inputs.max_diff_skip_multiplier }}
         SKIP_DRAFT: ${{ inputs.skip_draft }}
         FAIL_ON_BLOCKERS: ${{ inputs.fail_on_blockers }}
         GH_TOKEN: ${{ inputs.gh_token || github.token }}

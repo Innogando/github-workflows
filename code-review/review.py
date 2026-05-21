@@ -67,6 +67,7 @@ class Config:
     litellm_base_url: str
     litellm_model: str
     max_diff_lines: int
+    max_diff_skip_multiplier: int
     skip_draft: bool
     fail_on_blockers: bool
 
@@ -85,6 +86,10 @@ class Config:
             max_lines = int(_env("MAX_DIFF_LINES", "2000") or "2000")
         except ValueError as exc:
             raise ReviewError(f"MAX_DIFF_LINES must be an integer: {exc}") from exc
+        try:
+            skip_multiplier = int(_env("MAX_DIFF_SKIP_MULTIPLIER", "3") or "3")
+        except ValueError as exc:
+            raise ReviewError(f"MAX_DIFF_SKIP_MULTIPLIER must be an integer: {exc}") from exc
         return cls(
             pr_number=pr_number,
             repo=repo,
@@ -93,6 +98,7 @@ class Config:
             litellm_base_url=_env("LITELLM_BASE_URL"),
             litellm_model=_env("LITELLM_MODEL"),
             max_diff_lines=max_lines,
+            max_diff_skip_multiplier=skip_multiplier,
             skip_draft=_truthy("SKIP_DRAFT", default=True),
             fail_on_blockers=_truthy("FAIL_ON_BLOCKERS", default=True),
         )
@@ -149,8 +155,17 @@ def build_context() -> str:
     for label, rel_path in CONTEXT_FILES:
         content = read_optional(rel_path)
         if content:
+            log.info("Context file loaded: %s (%s)", label, rel_path)
             sections.append(f"## {label}\n\n{content}")
+        else:
+            log.debug("Context file not found (skipping): %s (%s)", label, rel_path)
     if not sections:
+        log.warning(
+            "No context files found — checked %d paths (cwd=%s). "
+            "Check that the action runs from the repository root.",
+            len(CONTEXT_FILES),
+            Path.cwd(),
+        )
         return "_No repository context files found._"
     return "\n\n".join(sections)
 
@@ -199,10 +214,27 @@ def summarize_ci(checks: list[dict]) -> tuple[str, bool]:
     return "green — all checks passing", False
 
 
+def _compact_meta(meta: dict) -> dict:
+    body = meta.get("body") or ""
+    return {
+        "number": meta.get("number"),
+        "title": meta.get("title", ""),
+        "author": (meta.get("author") or {}).get("login", "unknown"),
+        "base": meta.get("baseRefName", ""),
+        "head": meta.get("headRefName", ""),
+        "additions": meta.get("additions", 0),
+        "deletions": meta.get("deletions", 0),
+        "changed_files": meta.get("changedFiles", 0),
+        "labels": [lb["name"] for lb in (meta.get("labels") or []) if lb.get("name")],
+        "draft": meta.get("isDraft", False),
+        "body": body[:500] + ("…" if len(body) > 500 else ""),
+    }
+
+
 def build_user_message(meta: dict, diff: str, ci_summary: str, repo_context: str) -> str:
     parts = [
         "# Pull request metadata",
-        json.dumps(meta, indent=2),
+        json.dumps(_compact_meta(meta), indent=2),
         "",
         f"# CI status\n\n{ci_summary}",
         "",
@@ -260,8 +292,9 @@ def _post_with_retries(url: str, payload: dict, headers: dict) -> dict:
             if attempt == LLM_MAX_ATTEMPTS:
                 raise ReviewError(f"LiteLLM unreachable after {attempt} attempts: {exc}") from exc
             log.warning("LiteLLM transport error on attempt %d/%d: %s", attempt, LLM_MAX_ATTEMPTS, exc)
-        sleep_for = LLM_BACKOFF_BASE ** attempt + random.uniform(0, 0.5)
-        time.sleep(sleep_for)
+        if attempt < LLM_MAX_ATTEMPTS:
+            sleep_for = LLM_BACKOFF_BASE ** attempt + random.uniform(0, 0.5)
+            time.sleep(sleep_for)
     raise ReviewError(f"LiteLLM call failed: {last_error}")
 
 
@@ -364,13 +397,15 @@ def comment_body(report: str) -> str:
 
 
 def find_existing_comment(repo: str, pr_number: str) -> int | None:
-    raw = run_gh(["api", f"repos/{repo}/issues/{pr_number}/comments", "--paginate"])
-    comments = json.loads(raw)
-    for comment in reversed(comments):
-        body = comment.get("body") or ""
-        if COMMENT_MARKER in body:
-            return int(comment["id"])
-    return None
+    raw = run_gh([
+        "api",
+        f"repos/{repo}/issues/{pr_number}/comments",
+        "--paginate",
+        "--jq",
+        f'.[] | select(.body | contains("{COMMENT_MARKER}")) | .id',
+    ])
+    ids = [line.strip() for line in raw.splitlines() if line.strip()]
+    return int(ids[-1]) if ids else None
 
 
 def post_or_update_comment(repo: str, pr_number: str, body: str) -> None:
@@ -405,6 +440,18 @@ def write_step_summary(markdown: str) -> None:
         log.warning("Could not write step summary: %s", exc)
 
 
+def write_github_output(verdict: str, blockers: bool) -> None:
+    path = os.environ.get("GITHUB_OUTPUT")
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(f"verdict={verdict}\n")
+            fh.write(f"has_blockers={'true' if blockers else 'false'}\n")
+    except OSError as exc:
+        log.warning("Could not write GITHUB_OUTPUT: %s", exc)
+
+
 def has_blockers(review: dict) -> bool:
     return review["verdict"] == "request_changes" or bool(review["blockers"])
 
@@ -413,6 +460,7 @@ def run(cfg: Config) -> int:
     meta = fetch_pr_metadata(cfg.pr_number)
 
     if cfg.skip_draft and meta.get("isDraft"):
+        print(f"::notice::Code review skipped — PR #{cfg.pr_number} is a draft", file=sys.stderr)
         log.info("Skipping draft PR #%s", cfg.pr_number)
         return 0
 
@@ -420,15 +468,26 @@ def run(cfg: Config) -> int:
     diff_lines = len(diff.splitlines()) if diff else 0
     diff_truncated = False
 
-    if diff_lines > cfg.max_diff_lines:
+    skip_threshold = cfg.max_diff_lines * cfg.max_diff_skip_multiplier
+    if diff_lines > skip_threshold:
         reason = (
-            f"diff exceeds {cfg.max_diff_lines} lines ({diff_lines} lines). "
+            f"diff exceeds {skip_threshold} lines ({diff_lines} lines — "
+            f"{cfg.max_diff_skip_multiplier}× the review limit). "
             "Split the PR or raise max_diff_lines."
         )
+        print(f"::notice::Code review skipped — {reason}", file=sys.stderr)
         markdown = post_skip_comment(cfg.repo, cfg.pr_number, reason)
         write_step_summary(markdown)
-        log.info(reason)
         return 0
+
+    if diff_lines > cfg.max_diff_lines:
+        diff = "\n".join(diff.splitlines()[:cfg.max_diff_lines])
+        diff_truncated = True
+        print(
+            f"::warning::Diff truncated from {diff_lines} to {cfg.max_diff_lines} lines — review may be incomplete",
+            file=sys.stderr,
+        )
+        log.warning("Diff truncated from %d to %d lines for review", diff_lines, cfg.max_diff_lines)
 
     checks = fetch_pr_checks(cfg.pr_number)
     ci_summary, ci_failing = summarize_ci(checks)
@@ -439,6 +498,7 @@ def run(cfg: Config) -> int:
 
     raw_review = call_litellm(cfg, system_prompt, user_message)
     review = normalize_review(raw_review)
+    write_github_output(review["verdict"], has_blockers(review))
     markdown = render_markdown(meta, review, ci_summary, diff_truncated)
     post_or_update_comment(cfg.repo, cfg.pr_number, comment_body(markdown))
     write_step_summary(markdown)
@@ -446,11 +506,14 @@ def run(cfg: Config) -> int:
     blocked = has_blockers(review) or ci_failing
     if blocked and cfg.fail_on_blockers:
         if ci_failing:
+            print("::error::CI checks are failing — review blocked", file=sys.stderr)
             log.error("CI checks are failing — treating as blocker")
         if has_blockers(review):
+            print("::error::Review found blockers — see PR comment for details", file=sys.stderr)
             log.error("Review found blockers")
         return 1
 
+    print(f"::notice::Code review complete — verdict: {review['verdict']}", file=sys.stderr)
     log.info("Review completed successfully")
     return 0
 
