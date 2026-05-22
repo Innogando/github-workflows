@@ -132,7 +132,7 @@ Authenticates to GCP and configures Docker for Artifact Registry.
 
 ### `check-build-number-flutter`
 
-Validates that the build number in `pubspec.yaml` was incremented by exactly 1 compared to main.
+Validates that the build number in `pubspec.yaml` is greater than on the PR base branch (e.g. `develop` or `main`). Allows any positive increment, not only +1.
 
 No inputs required.
 

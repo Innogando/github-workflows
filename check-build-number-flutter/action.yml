@@ -1,6 +1,6 @@
 name: 'Check Build Number Flutter'
 
-description: 'Check build number in Flutter'
+description: 'Check that the Flutter build number in pubspec.yaml is greater than the PR base branch'
 
 runs:
   using: 'composite'
@@ -10,27 +10,26 @@ runs:
 
     - name: Check build number
       run: |
+        set -euo pipefail
+
+        BASE_REF="${{ github.event.pull_request.base.ref || 'main' }}"
+
         # Get current build number
         CURRENT_BUILD_NUMBER=$(grep "version:" pubspec.yaml | sed 's/.*+//')
         echo "Current build number: $CURRENT_BUILD_NUMBER"
-        
-        # Get build number from main
-        git fetch origin main
-        git show origin/main:pubspec.yaml | grep "version:" | sed 's/.*+//' > main_build_number.txt
-        MAIN_BUILD_NUMBER=$(cat main_build_number.txt)
-        echo "Build number in main: $MAIN_BUILD_NUMBER"
-        
-        # Calculate expected build number
-        EXPECTED_BUILD_NUMBER=$((MAIN_BUILD_NUMBER + 1))
-        echo "Expected build number: $EXPECTED_BUILD_NUMBER"
-        
-        # Verify
-        if [ "$CURRENT_BUILD_NUMBER" -eq "$EXPECTED_BUILD_NUMBER" ]; then
+
+        # Get build number from the PR base branch (e.g. develop or main)
+        git fetch origin "${BASE_REF}"
+        BASE_BUILD_NUMBER=$(git show "origin/${BASE_REF}:pubspec.yaml" | grep "version:" | sed 's/.*+//')
+        echo "Build number on ${BASE_REF}: $BASE_BUILD_NUMBER"
+
+        # Verify: must be strictly greater than base (allows skipping ahead after multiple merges)
+        if [ "$CURRENT_BUILD_NUMBER" -gt "$BASE_BUILD_NUMBER" ]; then
           echo "✅ The build number has been incremented correctly"
         else
           echo "❌ The build number validation has failed!"
-          echo "Current: $CURRENT_BUILD_NUMBER, Expected: $EXPECTED_BUILD_NUMBER"
-          echo "Please increment the build number in pubspec.yaml by 1"
+          echo "Current: $CURRENT_BUILD_NUMBER, must be greater than ${BASE_REF}: $BASE_BUILD_NUMBER"
+          echo "Please increment the build number in pubspec.yaml above ${BASE_BUILD_NUMBER}"
           exit 1
         fi
       shell: bash
