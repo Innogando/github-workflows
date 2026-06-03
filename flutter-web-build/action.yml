@@ -32,6 +32,10 @@ runs:
       run: flutter pub get
       shell: bash
 
+    - name: Generate code
+      run: dart run build_runner build --delete-conflicting-outputs
+      shell: bash
+
     - name: Build web
       env:
         TOKEN: ${{ inputs.token }}
