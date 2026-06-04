@@ -201,8 +201,12 @@ AI-powered pull request review via the org LiteLLM gateway. Fetches the PR diff,
 | `max_diff_lines` | no | `2000` | Skip review (with comment) if diff exceeds this many lines |
 | `skip_draft` | no | `true` | Skip draft PRs |
 | `fail_on_blockers` | no | `true` | Exit 1 when blockers or failing CI are found |
+| `include_nits` | no | `false` | Surface minor/nit findings. Off by default — linters/formatters own style |
+| `min_confidence` | no | `medium` | Minimum confidence (`high`/`medium`) for major findings; lower-confidence findings are dropped |
 | `gh_token` | no | `GITHUB_TOKEN` | GitHub token for PR API calls |
 | `pr_number` | no | `github.event.pull_request.number` | PR number to review |
+
+The reviewer is tuned for **precision over recall**: only confident, consequential issues are reported, and a clean PR is expected to approve with no findings. Only blockers (or failing CI) fail the job — major/minor findings are advisory. Minor nits are suppressed by default; raise the bar further with `min_confidence: high` or surface nits with `include_nits: true`.
 
 #### Prerequisites
 

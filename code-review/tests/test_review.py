@@ -77,12 +77,32 @@ class NormalizeReviewTests(unittest.TestCase):
         out = review.normalize_review(
             self._minimal(
                 blockers=[
-                    {"location": "a.py:1", "description": "boom", "suggested_fix": "fix it"}
+                    {
+                        "location": "a.py:1",
+                        "description": "boom",
+                        "why_it_matters": "crashes on None",
+                        "confidence": "high",
+                        "suggested_fix": "fix it",
+                    }
                 ]
             )
         )
         self.assertEqual(out["blockers"][0]["location"], "a.py:1")
         self.assertEqual(out["blockers"][0]["suggested_fix"], "fix it")
+        self.assertEqual(out["blockers"][0]["why_it_matters"], "crashes on None")
+        self.assertEqual(out["blockers"][0]["confidence"], "high")
+
+    def test_missing_or_invalid_confidence_defaults_to_low(self):
+        out = review.normalize_review(
+            self._minimal(
+                major=[
+                    {"location": "a.py:1", "description": "x"},
+                    {"location": "b.py:2", "description": "y", "confidence": "bogus"},
+                ]
+            )
+        )
+        self.assertEqual(out["major"][0]["confidence"], "low")
+        self.assertEqual(out["major"][1]["confidence"], "low")
 
     def test_drops_blank_strings_in_lists(self):
         out = review.normalize_review(self._minimal(praise=["nice", "  ", ""]))
@@ -283,6 +303,91 @@ class WriteGithubOutputTests(unittest.TestCase):
     def test_no_op_when_env_unset(self):
         os.environ.pop("GITHUB_OUTPUT", None)
         review.write_github_output("approve", False)  # should not raise
+
+
+class FilterFindingsTests(unittest.TestCase):
+    def _finding(self, confidence: str, loc: str = "a.py:1") -> dict:
+        return {
+            "location": loc,
+            "description": "d",
+            "why_it_matters": "w",
+            "confidence": confidence,
+            "suggested_fix": "",
+        }
+
+    def _review(self, **overrides) -> dict:
+        base = {
+            "verdict": "approve_with_comments",
+            "summary": "",
+            "blockers": [],
+            "major": [],
+            "minor": [],
+            "praise": [],
+            "out_of_scope": [],
+            "questions": [],
+        }
+        base.update(overrides)
+        return base
+
+    def test_drops_low_confidence_major(self):
+        rev = self._review(major=[self._finding("low"), self._finding("medium")])
+        out = review.filter_findings(rev, min_confidence="medium", include_nits=False)
+        self.assertEqual(len(out["major"]), 1)
+        self.assertEqual(out["major"][0]["confidence"], "medium")
+
+    def test_high_threshold_drops_medium_major(self):
+        rev = self._review(major=[self._finding("medium"), self._finding("high")])
+        out = review.filter_findings(rev, min_confidence="high", include_nits=False)
+        self.assertEqual(len(out["major"]), 1)
+        self.assertEqual(out["major"][0]["confidence"], "high")
+
+    def test_minor_dropped_when_nits_off(self):
+        rev = self._review(minor=[self._finding("high")])
+        out = review.filter_findings(rev, min_confidence="medium", include_nits=False)
+        self.assertEqual(out["minor"], [])
+
+    def test_minor_kept_high_only_when_nits_on(self):
+        rev = self._review(minor=[self._finding("high"), self._finding("medium")])
+        out = review.filter_findings(rev, min_confidence="medium", include_nits=True)
+        self.assertEqual(len(out["minor"]), 1)
+        self.assertEqual(out["minor"][0]["confidence"], "high")
+
+    def test_blockers_always_kept(self):
+        rev = self._review(blockers=[self._finding("low")])
+        out = review.filter_findings(rev, min_confidence="high", include_nits=False)
+        self.assertEqual(len(out["blockers"]), 1)
+
+
+class DeriveVerdictTests(unittest.TestCase):
+    def _review(self, **overrides) -> dict:
+        base = {
+            "verdict": "approve_with_comments",
+            "blockers": [],
+            "major": [],
+            "minor": [],
+        }
+        base.update(overrides)
+        return base
+
+    def test_blocker_forces_request_changes(self):
+        rev = self._review(blockers=[{"location": "a:1"}])
+        self.assertEqual(review.derive_verdict(rev, ci_failing=False), "request_changes")
+
+    def test_ci_failing_forces_request_changes(self):
+        rev = self._review()
+        self.assertEqual(review.derive_verdict(rev, ci_failing=True), "request_changes")
+
+    def test_major_only_is_approve_with_comments(self):
+        rev = self._review(major=[{"location": "a:1"}])
+        self.assertEqual(review.derive_verdict(rev, ci_failing=False), "approve_with_comments")
+
+    def test_empty_is_approve(self):
+        rev = self._review()
+        self.assertEqual(review.derive_verdict(rev, ci_failing=False), "approve")
+
+    def test_cannot_review_is_preserved(self):
+        rev = self._review(verdict="cannot_review")
+        self.assertEqual(review.derive_verdict(rev, ci_failing=True), "cannot_review")
 
 
 if __name__ == "__main__":

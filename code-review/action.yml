@@ -27,6 +27,18 @@ inputs:
     description: Exit 1 when blockers (or failing CI) are found when "true"
     required: false
     default: "true"
+  include_nits:
+    description: >-
+      Include minor/nit-level findings when "true". Off by default — formatters and
+      linters already own style, so nits are suppressed to keep reviews high-signal.
+    required: false
+    default: "false"
+  min_confidence:
+    description: >-
+      Minimum confidence for major findings to be reported (high | medium). Lower-confidence
+      findings are dropped as a deterministic backstop against noise. Default: medium.
+    required: false
+    default: "medium"
   python_version:
     description: Python version used to run the review script
     required: false
@@ -111,6 +123,8 @@ runs:
         MAX_DIFF_SKIP_MULTIPLIER: ${{ inputs.max_diff_skip_multiplier }}
         SKIP_DRAFT: ${{ inputs.skip_draft }}
         FAIL_ON_BLOCKERS: ${{ inputs.fail_on_blockers }}
+        INCLUDE_NITS: ${{ inputs.include_nits }}
+        MIN_CONFIDENCE: ${{ inputs.min_confidence }}
         GH_TOKEN: ${{ inputs.gh_token || github.token }}
         PR_NUMBER: ${{ inputs.pr_number || github.event.pull_request.number }}
         GITHUB_ACTION_PATH: ${{ github.action_path }}

@@ -30,6 +30,11 @@ VALID_VERDICTS = {
     "cannot_review",
 }
 
+# Ordered weakest → strongest. Findings below the configured minimum are dropped.
+CONFIDENCE_LEVELS = ("low", "medium", "high")
+CONFIDENCE_RANK = {level: rank for rank, level in enumerate(CONFIDENCE_LEVELS)}
+DEFAULT_MIN_CONFIDENCE = "medium"
+
 VERDICT_RENDER = {
     "approve": "✅ Approve — no blocking issues",
     "approve_with_comments": "⚠️ Approve with comments — non-blocking findings only",
@@ -70,6 +75,8 @@ class Config:
     max_diff_skip_multiplier: int
     skip_draft: bool
     fail_on_blockers: bool
+    min_confidence: str
+    include_nits: bool
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -90,6 +97,11 @@ class Config:
             skip_multiplier = int(_env("MAX_DIFF_SKIP_MULTIPLIER", "3") or "3")
         except ValueError as exc:
             raise ReviewError(f"MAX_DIFF_SKIP_MULTIPLIER must be an integer: {exc}") from exc
+        min_confidence = _env("MIN_CONFIDENCE", DEFAULT_MIN_CONFIDENCE).lower() or DEFAULT_MIN_CONFIDENCE
+        if min_confidence not in CONFIDENCE_RANK:
+            raise ReviewError(
+                f"MIN_CONFIDENCE must be one of {', '.join(CONFIDENCE_LEVELS)}: got {min_confidence!r}"
+            )
         return cls(
             pr_number=pr_number,
             repo=repo,
@@ -101,6 +113,8 @@ class Config:
             max_diff_skip_multiplier=skip_multiplier,
             skip_draft=_truthy("SKIP_DRAFT", default=True),
             fail_on_blockers=_truthy("FAIL_ON_BLOCKERS", default=True),
+            min_confidence=min_confidence,
+            include_nits=_truthy("INCLUDE_NITS", default=False),
         )
 
 
@@ -312,10 +326,17 @@ def normalize_review(raw: dict) -> dict:
         for entry in items:
             if not isinstance(entry, dict):
                 continue
+            confidence = str(entry.get("confidence", "")).strip().lower()
+            if confidence not in CONFIDENCE_RANK:
+                # Unknown/missing confidence is treated as the weakest tier so it
+                # is dropped by the filter unless the model asserts otherwise.
+                confidence = "low"
             out.append(
                 {
                     "location": str(entry.get("location", "")).strip(),
                     "description": str(entry.get("description", "")).strip(),
+                    "why_it_matters": str(entry.get("why_it_matters", "")).strip(),
+                    "confidence": confidence,
                     "suggested_fix": str(entry.get("suggested_fix", "")).strip(),
                 }
             )
@@ -337,6 +358,63 @@ def normalize_review(raw: dict) -> dict:
         "out_of_scope": _strings("out_of_scope"),
         "questions": _strings("questions"),
     }
+
+
+def filter_findings(review: dict, *, min_confidence: str, include_nits: bool) -> dict:
+    """Drop low-value findings so only confident, consequential issues remain.
+
+    - Blockers are always kept (the prompt requires them to be demonstrable), but a
+      low-confidence blocker is logged so we can spot prompt drift.
+    - Major findings must clear ``min_confidence``.
+    - Minor findings are dropped entirely unless ``include_nits`` is set, and even then
+      require high confidence.
+    """
+    threshold = CONFIDENCE_RANK[min_confidence]
+
+    def _clears(finding: dict, floor: int) -> bool:
+        return CONFIDENCE_RANK.get(finding.get("confidence", "low"), 0) >= floor
+
+    kept = dict(review)
+
+    weak_blockers = [b for b in review["blockers"] if not _clears(b, CONFIDENCE_RANK["medium"])]
+    if weak_blockers:
+        log.warning("%d blocker(s) arrived below medium confidence — keeping but flagging", len(weak_blockers))
+    kept["blockers"] = review["blockers"]
+
+    kept["major"] = [m for m in review["major"] if _clears(m, threshold)]
+
+    if include_nits:
+        kept["minor"] = [m for m in review["minor"] if _clears(m, CONFIDENCE_RANK["high"])]
+    else:
+        kept["minor"] = []
+
+    dropped = (
+        (len(review["major"]) - len(kept["major"]))
+        + (len(review["minor"]) - len(kept["minor"]))
+    )
+    if dropped:
+        log.info(
+            "Filtered out %d low-confidence/nit finding(s) (min_confidence=%s, include_nits=%s)",
+            dropped,
+            min_confidence,
+            include_nits,
+        )
+    return kept
+
+
+def derive_verdict(review: dict, *, ci_failing: bool) -> str:
+    """Recompute the verdict from the filtered findings so it can't drift from what's shown.
+
+    Preserves ``cannot_review`` (a context problem, not a findings problem). Otherwise only
+    blockers or failing CI justify ``request_changes`` — major/minor are advisory.
+    """
+    if review["verdict"] == "cannot_review":
+        return "cannot_review"
+    if ci_failing or review["blockers"]:
+        return "request_changes"
+    if review["major"] or review["minor"]:
+        return "approve_with_comments"
+    return "approve"
 
 
 def render_markdown(meta: dict, review: dict, ci_summary: str, diff_truncated: bool) -> str:
@@ -364,6 +442,12 @@ def render_markdown(meta: dict, review: dict, ci_summary: str, diff_truncated: b
     if diff_truncated:
         lines.extend(["", "> ⚠️ Diff was truncated — review may be incomplete."])
 
+    has_any_finding = any(
+        review[key] for key in ("blockers", "major", "minor", "out_of_scope", "questions")
+    )
+    if review["verdict"] == "approve" and not has_any_finding:
+        lines.extend(["", "Nothing to flag — looks good to merge. ✨"])
+
     def _render_findings(heading: str, items: list[dict]) -> None:
         if not items:
             return
@@ -371,6 +455,8 @@ def render_markdown(meta: dict, review: dict, ci_summary: str, diff_truncated: b
         for it in items:
             loc = it["location"] or "_(no location)_"
             bullet = f"- `{loc}` — {it['description']}"
+            if it.get("why_it_matters"):
+                bullet += f" — {it['why_it_matters']}"
             if it["suggested_fix"]:
                 bullet += f" _Suggested fix:_ {it['suggested_fix']}"
             lines.append(bullet)
@@ -498,6 +584,12 @@ def run(cfg: Config) -> int:
 
     raw_review = call_litellm(cfg, system_prompt, user_message)
     review = normalize_review(raw_review)
+    review = filter_findings(
+        review,
+        min_confidence=cfg.min_confidence,
+        include_nits=cfg.include_nits,
+    )
+    review["verdict"] = derive_verdict(review, ci_failing=ci_failing)
     write_github_output(review["verdict"], has_blockers(review))
     markdown = render_markdown(meta, review, ci_summary, diff_truncated)
     post_or_update_comment(cfg.repo, cfg.pr_number, comment_body(markdown))

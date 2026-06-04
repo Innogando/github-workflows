@@ -41,3 +41,5 @@ jobs:
           # max_diff_lines: "2000"
           # skip_draft: "true"
           # fail_on_blockers: "true"
+          # include_nits: "false"      # set "true" to surface minor/nit findings
+          # min_confidence: "medium"   # "high" for an even quieter, higher-bar review
