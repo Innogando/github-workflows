@@ -27,6 +27,10 @@ runs:
       run: flutter pub get
       shell: bash
 
+    - name: Generate code
+      run: dart run build_runner build --delete-conflicting-outputs
+      shell: bash
+
     - name: Run tests
       run: flutter test ${{ inputs.test_args }}
       shell: bash
