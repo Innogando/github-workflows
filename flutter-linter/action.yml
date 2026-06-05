@@ -8,6 +8,10 @@ inputs:
   skip_analysis:
     required: false
     default: false
+  run_build_runner:
+    description: Whether to run build_runner before linting
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -25,9 +29,14 @@ runs:
       run: flutter pub get
       shell: bash
 
+    - name: Generate code
+      if: ${{ inputs.run_build_runner == 'true' }}
+      run: dart run build_runner build --delete-conflicting-outputs
+      shell: bash
+
     - name: Verify code formatting (excluding encrypted files)
       run: |
-        find lib -name "constants.dart" -prune -o -name "*.dart" -print | xargs dart format --output=none --set-exit-if-changed
+        find lib test -name "constants.dart" -prune -o -name "*.dart" -print | xargs dart format --output=none --set-exit-if-changed
       shell: bash
 
     - name: Static analysis

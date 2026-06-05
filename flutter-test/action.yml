@@ -10,6 +10,10 @@ inputs:
     description: Arguments passed to flutter test
     required: false
     default: '--reporter expanded'
+  run_build_runner:
+    description: Whether to run build_runner before testing
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -28,6 +32,7 @@ runs:
       shell: bash
 
     - name: Generate code
+      if: ${{ inputs.run_build_runner == 'true' }}
       run: dart run build_runner build --delete-conflicting-outputs
       shell: bash
 
